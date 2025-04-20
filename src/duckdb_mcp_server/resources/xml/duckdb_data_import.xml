@@ -1,0 +1,1865 @@
+<duckdb_data_import>
+  <metadata>
+    <title>DuckDB Data Import Reference</title>
+    <description>Comprehensive reference for importing data from various sources into DuckDB</description>
+    <version>1.1</version>
+  </metadata>
+
+  <!-- S3 API Support -->
+  <data_source type="s3">
+    <name>S3 API Support</name>
+    <description>The httpfs extension supports reading, writing, and globbing files on object storage servers using the S3 API. S3 offers a standard API to read and write to remote files that is now common among industry storage providers.</description>
+    
+    <platforms>
+      <platform>AWS S3</platform>
+      <platform>Minio</platform>
+      <platform>Google Cloud Storage</platform>
+      <platform>lakeFS</platform>
+      <platform>Cloudflare R2 (partial support)</platform>
+    </platforms>
+
+    <feature_requirements>
+      <requirement>
+        <feature>Public file reads</feature>
+        <api_requirement>HTTP Range requests</api_requirement>
+      </requirement>
+      <requirement>
+        <feature>Private file reads</feature>
+        <api_requirement>Secret key or session token authentication</api_requirement>
+      </requirement>
+      <requirement>
+        <feature>File glob</feature>
+        <api_requirement>ListObjectsV2</api_requirement>
+      </requirement>
+      <requirement>
+        <feature>File writes</feature>
+        <api_requirement>Multipart upload</api_requirement>
+      </requirement>
+    </feature_requirements>
+    
+    <authentication>
+      <method name="config_provider">
+        <description>The default provider allows access to S3 bucket by manually providing a key.</description>
+        <example>
+          <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER config,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
+
+-- Query using the above secret
+SELECT *
+FROM 's3://your_bucket/your_file.parquet';
+          </code>
+          <note>If you get an IO Error (Connection error for HTTP HEAD), configure the endpoint explicitly via ENDPOINT 's3.your_region.amazonaws.com'.</note>
+        </example>
+      </method>
+      
+      <method name="credential_chain_provider">
+        <description>Allows automatically fetching credentials using mechanisms provided by the AWS SDK.</description>
+        <example>
+          <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER credential_chain
+);
+
+-- Query using the above secret
+SELECT *
+FROM 's3://your_bucket/your_file.parquet';
+          </code>
+        </example>
+        
+        <additional_options>
+          <option name="chain">
+            <description>Takes a semicolon-separated list of providers that will be tried in order.</description>
+            <values>config, sts, sso, env, instance, process</values>
+            <example>
+              <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER credential_chain,
+    CHAIN 'env;config'
+);
+              </code>
+            </example>
+          </option>
+          
+          <option name="override_config">
+            <description>Override automatically fetched config</description>
+            <example>
+              <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER credential_chain,
+    CHAIN config,
+    REGION 'eu-west-1'
+);
+              </code>
+            </example>
+          </option>
+          
+          <option name="profile_based">
+            <description>Load credentials based on a profile</description>
+            <example>
+              <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER credential_chain,
+    CHAIN config,
+    PROFILE 'my_profile'
+);
+              </code>
+              <note>This approach is equivalent to the deprecated S3 API's method load_aws_credentials('⟨my_profile⟩').</note>
+            </example>
+          </option>
+        </additional_options>
+      </method>
+    </authentication>
+    
+    <secret_parameters>
+      <parameter name="ENDPOINT">
+        <description>Specify a custom S3 endpoint</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>s3.amazonaws.com for S3</default>
+      </parameter>
+      <parameter name="KEY_ID">
+        <description>The ID of the key to use</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>-</default>
+      </parameter>
+      <parameter name="REGION">
+        <description>The region for which to authenticate (should match the region of the bucket to query)</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>us-east-1</default>
+      </parameter>
+      <parameter name="SECRET">
+        <description>The secret of the key to use</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>-</default>
+      </parameter>
+      <parameter name="SESSION_TOKEN">
+        <description>Optionally, a session token can be passed to use temporary credentials</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>-</default>
+      </parameter>
+      <parameter name="URL_COMPATIBILITY_MODE">
+        <description>Can help when URLs contain problematic characters</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>BOOLEAN</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="URL_STYLE">
+        <description>Either vhost or path</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>STRING</type>
+        <default>vhost for S3, path for R2 and GCS</default>
+      </parameter>
+      <parameter name="USE_SSL">
+        <description>Whether to use HTTPS or HTTP</description>
+        <secret_types>S3, GCS, R2</secret_types>
+        <type>BOOLEAN</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="ACCOUNT_ID">
+        <description>The R2 account ID to use for generating the endpoint URL</description>
+        <secret_types>R2</secret_types>
+        <type>STRING</type>
+        <default>-</default>
+      </parameter>
+      <parameter name="KMS_KEY_ID">
+        <description>AWS KMS (Key Management Service) key for Server Side Encryption S3</description>
+        <secret_types>S3</secret_types>
+        <type>STRING</type>
+        <default>-</default>
+      </parameter>
+    </secret_parameters>
+    
+    <platform_specific_secrets>
+      <secret type="s3_kms">
+        <description>Server Side Encryption via AWS Key Management Service on S3</description>
+        <example>
+          <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE s3,
+    PROVIDER credential_chain,
+    CHAIN config,
+    REGION 'eu-west-1',
+    KMS_KEY_ID 'arn:aws:kms:region:account_id:key/key_id',
+    SCOPE 's3://bucket_sub_path'
+);
+          </code>
+        </example>
+      </secret>
+      
+      <secret type="r2">
+        <description>Cloudflare R2 uses the regular S3 API, but DuckDB has a special Secret type to make configuration simpler</description>
+        <example>
+          <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE r2,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    ACCOUNT_ID 'my_account_id'
+);
+
+-- Use with r2:// prefix
+SELECT *
+FROM read_parquet('r2://some_file_that_uses_an_r2_secret.parquet');
+          </code>
+        </example>
+        <note>R2 secrets can also use both the CONFIG and credential_chain providers, and are only available with the r2:// URL prefix.</note>
+      </secret>
+      
+      <secret type="gcs">
+        <description>Google Cloud Storage is accessed by DuckDB using the S3 API, but has a special Secret type for simpler configuration</description>
+        <example>
+          <code>
+CREATE OR REPLACE SECRET secret (
+    TYPE gcs,
+    KEY_ID 'my_key',
+    SECRET 'my_secret'
+);
+
+-- Use with gcs:// or gs:// prefix
+SELECT *
+FROM read_parquet('gcs://some/file/that/uses/a/gcs/secret.parquet');
+          </code>
+        </example>
+        <note>GCS secrets automatically have the correct Google Cloud Storage endpoint configured, can use both the CONFIG and credential_chain providers, and are only available with the gcs:// or gs:// URL prefixes.</note>
+      </secret>
+    </platform_specific_secrets>
+    
+    <operations>
+      <operation name="reading">
+        <description>Reading files from S3</description>
+        <example>
+          <code>
+SELECT *
+FROM 's3://bucket_name/filename.extension';
+          </code>
+        </example>
+        
+        <feature name="partial_reading">
+          <description>The httpfs extension supports partial reading from S3 buckets.</description>
+        </feature>
+        
+        <feature name="multiple_files">
+          <description>Reading multiple files at once</description>
+          <example>
+            <code>
+SELECT *
+FROM read_parquet([
+    's3://bucket_name/filename_1.parquet',
+    's3://bucket_name/filename_2.parquet'
+]);
+            </code>
+          </example>
+        </feature>
+        
+        <feature name="globbing">
+          <description>Implemented using the ListObjectsV2 API call, allows using filesystem-like glob patterns to match multiple files</description>
+          <example>
+            <code>
+-- Matches all files in the root of the bucket with the Parquet extension
+SELECT *
+FROM read_parquet('s3://bucket_name/*.parquet');
+
+-- More complex pattern matching
+SELECT count(*) 
+FROM read_parquet('s3://bucket_name/folder*/100?/t[0-9].parquet');
+
+-- Using the filename option to add the source filename as a column
+SELECT *
+FROM read_parquet('s3://bucket_name/*.parquet', filename = true);
+            </code>
+          </example>
+        </feature>
+        
+        <feature name="hive_partitioning">
+          <description>DuckDB offers support for the Hive partitioning scheme, available when using HTTP(S) and S3 endpoints.</description>
+        </feature>
+      </operation>
+      
+      <operation name="writing">
+        <description>Writing to S3 uses the multipart upload API, allowing DuckDB to robustly upload files at high speed</description>
+        <example>
+          <code>
+-- Simple write
+COPY table_name TO 's3://bucket_name/filename.extension';
+
+-- Partitioned copy
+COPY table TO 's3://bucket_name/partitioned' (
+    FORMAT parquet,
+    PARTITION_BY (part_col_a, part_col_b)
+);
+
+-- Force write with OVERWRITE_OR_IGNORE
+COPY table TO 's3://bucket_name/partitioned' (
+    FORMAT parquet,
+    PARTITION_BY (part_col_a, part_col_b),
+    OVERWRITE_OR_IGNORE true
+);
+          </code>
+          <note>An automatic check is performed for existing files/directories, which is currently quite conservative (and on S3 will add a bit of latency).</note>
+        </example>
+        <output_structure>The naming scheme of the written files looks like: s3://your_bucket/partitioned/part_col_a=val/part_col_b=val/data_thread_number.parquet</output_structure>
+      </operation>
+    </operations>
+    
+    <configuration>
+      <parameter name="s3_uploader_max_parts_per_file">
+        <description>Used for part size calculation, see AWS docs</description>
+      </parameter>
+      <parameter name="s3_uploader_max_filesize">
+        <description>Used for part size calculation, see AWS docs</description>
+      </parameter>
+      <parameter name="s3_uploader_thread_limit">
+        <description>Maximum number of uploader threads</description>
+      </parameter>
+    </configuration>
+  </data_source>
+
+  <!-- Azure Storage Support -->
+  <data_source type="azure">
+    <name>Azure Storage Support</name>
+    <description>The azure extension adds a filesystem abstraction for Azure Blob storage and Azure Data Lake Storage to DuckDB.</description>
+    
+    <extension_info>
+      <installation>
+        <code>
+INSTALL azure;
+LOAD azure;
+        </code>
+        <note>The azure extension will be transparently autoloaded on first use from the official extension repository.</note>
+      </installation>
+    </extension_info>
+    
+    <storage_types>
+      <type name="azure_blob">
+        <description>Azure Blob Storage</description>
+        <uri_schemes>
+          <scheme>az</scheme>
+          <scheme>azure</scheme>
+        </uri_schemes>
+        <examples>
+          <example>
+            <code>
+-- Basic usage
+SELECT count(*)
+FROM 'az://my_container/path/my_file.parquet_or_csv';
+
+-- With glob patterns
+SELECT *
+FROM 'az://my_container/path/*.csv';
+
+SELECT *
+FROM 'az://my_container/path/**';
+
+-- With fully qualified path syntax
+SELECT count(*)
+FROM 'az://my_storage_account.blob.core.windows.net/my_container/path/my_file.parquet_or_csv';
+
+SELECT *
+FROM 'az://my_storage_account.blob.core.windows.net/my_container/path/*.csv';
+            </code>
+          </example>
+        </examples>
+      </type>
+      
+      <type name="azure_datalake">
+        <description>Azure Data Lake Storage (ADLS)</description>
+        <uri_schemes>
+          <scheme>abfss</scheme>
+        </uri_schemes>
+        <examples>
+          <example>
+            <code>
+-- Basic usage
+SELECT count(*)
+FROM 'abfss://my_filesystem/path/my_file.parquet_or_csv';
+
+-- With glob patterns
+SELECT *
+FROM 'abfss://my_filesystem/path/*.csv';
+
+SELECT *
+FROM 'abfss://my_filesystem/path/**';
+
+-- With fully qualified path syntax
+SELECT count(*)
+FROM 'abfss://my_storage_account.dfs.core.windows.net/my_filesystem/path/my_file.parquet_or_csv';
+
+SELECT *
+FROM 'abfss://my_storage_account.dfs.core.windows.net/my_filesystem/path/*.csv';
+            </code>
+          </example>
+        </examples>
+      </type>
+    </storage_types>
+    
+    <configuration>
+      <parameter name="azure_http_stats">
+        <description>Include HTTP info from Azure Storage in the EXPLAIN ANALYZE statement.</description>
+        <type>BOOLEAN</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="azure_read_transfer_concurrency">
+        <description>Maximum number of threads the Azure client can use for a single parallel read. If azure_read_transfer_chunk_size is less than azure_read_buffer_size then setting this > 1 will allow the Azure client to do concurrent requests to fill the buffer.</description>
+        <type>BIGINT</type>
+        <default>5</default>
+      </parameter>
+      <parameter name="azure_read_transfer_chunk_size">
+        <description>Maximum size in bytes that the Azure client will read in a single request. It is recommended that this is a factor of azure_read_buffer_size.</description>
+        <type>BIGINT</type>
+        <default>1024*1024</default>
+      </parameter>
+      <parameter name="azure_read_buffer_size">
+        <description>Size of the read buffer. It is recommended that this is evenly divisible by azure_read_transfer_chunk_size.</description>
+        <type>UBIGINT</type>
+        <default>1024*1024</default>
+      </parameter>
+      <parameter name="azure_transport_option_type">
+        <description>Underlying adapter to use in the Azure SDK. Valid values are: default or curl.</description>
+        <type>VARCHAR</type>
+        <default>default</default>
+        <notes>
+          <note>On Linux, setting to curl may solve certificate issues</note>
+          <note>On Windows, this replaces the default adapter (WinHTTP) allowing the use of curl capabilities like socks proxies</note>
+          <note>On all operating systems, it will honor environment variables like CURL_CA_INFO and CURL_CA_PATH</note>
+        </notes>
+      </parameter>
+      <parameter name="azure_context_caching">
+        <description>Enable/disable the caching of the underlying Azure SDK HTTP connection in the DuckDB connection context when performing queries.</description>
+        <type>BOOLEAN</type>
+        <default>true</default>
+        <note>If you suspect that this is causing some side effect, you can try to disable it by setting it to false (not recommended).</note>
+      </parameter>
+    </configuration>
+    
+    <authentication>
+      <method name="secret_config_provider">
+        <description>The default provider allows access to the storage account using a connection string or anonymously.</description>
+        <examples>
+          <example>
+            <name>With connection string</name>
+            <code>
+CREATE SECRET secret1 (
+    TYPE azure,
+    CONNECTION_STRING 'value'
+);
+            </code>
+          </example>
+          <example>
+            <name>Anonymous with account name</name>
+            <code>
+CREATE SECRET secret2 (
+    TYPE azure,
+    PROVIDER config,
+    ACCOUNT_NAME 'storage_account_name'
+);
+            </code>
+            <note>If you do not use authentication, you still need to specify the storage account name.</note>
+          </example>
+        </examples>
+      </method>
+      
+      <method name="credential_chain_provider">
+        <description>Allows connecting using credentials automatically fetched by the Azure SDK via the Azure credential chain.</description>
+        <examples>
+          <example>
+            <name>Default credential chain</name>
+            <code>
+CREATE SECRET secret3 (
+    TYPE azure,
+    PROVIDER credential_chain,
+    ACCOUNT_NAME 'storage_account_name'
+);
+            </code>
+            <note>By default, the DefaultAzureCredential chain is used, which tries credentials according to the order specified by the Azure documentation.</note>
+          </example>
+          <example>
+            <name>Specific credential chain</name>
+            <code>
+CREATE SECRET secret4 (
+    TYPE azure,
+    PROVIDER credential_chain,
+    CHAIN 'cli;env',
+    ACCOUNT_NAME 'storage_account_name'
+);
+            </code>
+            <note>Possible values for CHAIN are: cli, managed_identity, env, default. If no explicit CHAIN is provided, the default one will be default.</note>
+          </example>
+        </examples>
+      </method>
+      
+      <method name="service_principal_provider">
+        <description>Allows connecting using an Azure Service Principal (SPN).</description>
+        <examples>
+          <example>
+            <name>With secret</name>
+            <code>
+CREATE SECRET azure_spn (
+    TYPE azure,
+    PROVIDER service_principal,
+    TENANT_ID 'tenant_id',
+    CLIENT_ID 'client_id',
+    CLIENT_SECRET 'client_secret',
+    ACCOUNT_NAME 'storage_account_name'
+);
+            </code>
+          </example>
+          <example>
+            <name>With certificate</name>
+            <code>
+CREATE SECRET azure_spn_cert (
+    TYPE azure,
+    PROVIDER service_principal,
+    TENANT_ID 'tenant_id',
+    CLIENT_ID 'client_id',
+    CLIENT_CERTIFICATE_PATH 'client_cert_path',
+    ACCOUNT_NAME 'storage_account_name'
+);
+            </code>
+          </example>
+        </examples>
+      </method>
+      
+      <method name="proxy_configuration">
+        <description>Configure proxy information when using secrets.</description>
+        <example>
+          <code>
+CREATE SECRET secret5 (
+    TYPE azure,
+    CONNECTION_STRING 'value',
+    HTTP_PROXY 'http://localhost:3128',
+    PROXY_USER_NAME 'john',
+    PROXY_PASSWORD 'doe'
+);
+          </code>
+          <notes>
+            <note>When using secrets, the HTTP_PROXY environment variable will still be honored except if you provide an explicit value for it.</note>
+            <note>When using secrets, the SET variable of the Authentication with variables session will be ignored.</note>
+            <note>With the Azure credential_chain provider, the actual token is fetched at query time, not at the time of creating the secret.</note>
+          </notes>
+        </example>
+      </method>
+      
+      <method name="variables_deprecated">
+        <description>Authentication with variables (Deprecated).</description>
+        <usage>
+          <code>SET variable_name = variable_value;</code>
+        </usage>
+        <variables>
+          <variable name="azure_storage_connection_string">
+            <description>Azure connection string, used for authenticating and configuring Azure requests.</description>
+            <type>STRING</type>
+            <default>-</default>
+          </variable>
+          <variable name="azure_account_name">
+            <description>Azure account name, when set, the extension will attempt to automatically detect credentials (not used if you pass the connection string).</description>
+            <type>STRING</type>
+            <default>-</default>
+          </variable>
+          <variable name="azure_endpoint">
+            <description>Override the Azure endpoint for when the Azure credential providers are used.</description>
+            <type>STRING</type>
+            <default>blob.core.windows.net</default>
+          </variable>
+          <variable name="azure_credential_chain">
+            <description>Ordered list of Azure credential providers, in string format separated by ;. For example: 'cli;managed_identity;env'. See the list of possible values in the credential_chain provider section. Not used if you pass the connection string.</description>
+            <type>STRING</type>
+            <default>-</default>
+          </variable>
+          <variable name="azure_http_proxy">
+            <description>Proxy to use when login & performing request to Azure.</description>
+            <type>STRING</type>
+            <default>HTTP_PROXY environment variable (if set)</default>
+          </variable>
+          <variable name="azure_proxy_user_name">
+            <description>HTTP proxy username if needed.</description>
+            <type>STRING</type>
+            <default>-</default>
+          </variable>
+          <variable name="azure_proxy_password">
+            <description>HTTP proxy password if needed.</description>
+            <type>STRING</type>
+            <default>-</default>
+          </variable>
+        </variables>
+      </method>
+    </authentication>
+    
+    <additional_info>
+      <info name="logging">
+        <description>The Azure extension relies on the Azure SDK to connect to Azure Blob storage and supports printing the SDK logs to the console. To control the log level, set the AZURE_LOG_LEVEL environment variable.</description>
+        <example>
+          <code>
+import os
+import duckdb
+
+os.environ["AZURE_LOG_LEVEL"] = "verbose"
+
+duckdb.sql("CREATE SECRET myaccount (TYPE azure, PROVIDER credential_chain, SCOPE 'az://myaccount.blob.core.windows.net/')")
+duckdb.sql("SELECT count(*) FROM 'az://myaccount.blob.core.windows.net/path/to/blob.parquet'")
+          </code>
+        </example>
+      </info>
+      
+      <info name="adls_vs_blob">
+        <description>Even though ADLS implements similar functionality as the Blob storage, there are some important performance benefits to using the ADLS endpoints for globbing, especially when using complex glob patterns.</description>
+        <examples>
+          <example>
+            <name>Blob endpoint globbing process</name>
+            <description>
+1. List all files with the prefix
+2. Filter the result with the requested pattern
+
+This is less efficient because the Blob endpoint does not support the notion of directories, so filtering can only be performed after listing all files.
+            </description>
+          </example>
+          <example>
+            <name>ADLS endpoint globbing process</name>
+            <description>
+1. List all directories at each level
+2. Filter directories at each level
+3. List files only in the matching directories
+
+This is more efficient because the ADLS endpoint will list files recursively and supports the notion of directories.
+            </description>
+          </example>
+        </examples>
+        <note>Especially with higher partition/directory counts, the performance difference can be very significant.</note>
+      </info>
+    </additional_info>
+  </data_source>
+
+  <!-- Excel Extension -->
+  <data_source type="excel">
+    <name>Excel Extension</name>
+    <description>The excel extension provides functions to format numbers per Excel's formatting rules and functionality to read and write Excel (.xlsx) files. Note that .xls files are not supported.</description>
+    
+    <extension_info>
+      <installation>
+        <code>
+INSTALL excel;
+LOAD excel;
+        </code>
+        <note>The excel extension will be transparently autoloaded on first use from the official extension repository.</note>
+      </installation>
+    </extension_info>
+    
+    <functions>
+      <function name="excel_text">
+        <syntax>excel_text(number, format_string)</syntax>
+        <description>Format the given number per the rules given in the format_string</description>
+        <examples>
+          <example>
+            <code>SELECT excel_text(1_234_567.897, 'h:mm AM/PM') AS timestamp;</code>
+            <output>
+timestamp
+9:31 PM
+            </output>
+          </example>
+          <example>
+            <code>SELECT excel_text(1_234_567.897, 'h AM/PM') AS timestamp;</code>
+            <output>
+timestamp
+9 PM
+            </output>
+          </example>
+        </examples>
+      </function>
+      
+      <function name="text">
+        <syntax>text(number, format_string)</syntax>
+        <description>Alias for excel_text</description>
+      </function>
+    </functions>
+    
+    <operations>
+      <operation name="reading">
+        <description>Reading XLSX Files</description>
+        <examples>
+          <example>
+            <name>Simple reading</name>
+            <code>
+SELECT *
+FROM 'test.xlsx';
+            </code>
+            <output>
+a  b
+1.0 2.0
+3.0 4.0
+            </output>
+          </example>
+          <example>
+            <name>Using read_xlsx function with options</name>
+            <code>
+SELECT *
+FROM read_xlsx('test.xlsx', header = true);
+            </code>
+            <output>
+a  b
+1.0 2.0
+3.0 4.0
+            </output>
+          </example>
+          <example>
+            <name>Using COPY with explicit types</name>
+            <code>
+CREATE TABLE test (a DOUBLE, b DOUBLE);
+COPY test FROM 'test.xlsx' WITH (FORMAT xlsx, HEADER);
+SELECT * FROM test;
+            </code>
+          </example>
+        </examples>
+        
+        <parameters>
+          <parameter name="header">
+            <type>BOOLEAN</type>
+            <default>automatically inferred</default>
+            <description>Whether to treat the first row as containing the names of the resulting columns.</description>
+          </parameter>
+          <parameter name="sheet">
+            <type>VARCHAR</type>
+            <default>automatically inferred</default>
+            <description>The name of the sheet in the xlsx file to read. Default is the first sheet.</description>
+          </parameter>
+          <parameter name="all_varchar">
+            <type>BOOLEAN</type>
+            <default>false</default>
+            <description>Whether to read all cells as containing VARCHARs.</description>
+          </parameter>
+          <parameter name="ignore_errors">
+            <type>BOOLEAN</type>
+            <default>false</default>
+            <description>Whether to ignore errors and silently replace cells that cant be cast to the corresponding inferred column type with NULL's.</description>
+          </parameter>
+          <parameter name="range">
+            <type>VARCHAR</type>
+            <default>automatically inferred</default>
+            <description>The range of cells to read, in spreadsheet notation. For example, A1:B2 reads the cells from A1 to B2. If not specified the resulting range will be inferred as rectangular region of cells between the first row of consecutive non-empty cells and the first empty row spanning the same columns.</description>
+          </parameter>
+          <parameter name="stop_at_empty">
+            <type>BOOLEAN</type>
+            <default>automatically inferred</default>
+            <description>Whether to stop reading the file when an empty row is encountered. If an explicit range option is provided, this is false by default, otherwise true.</description>
+          </parameter>
+          <parameter name="empty_as_varchar">
+            <type>BOOLEAN</type>
+            <default>false</default>
+            <description>Whether to treat empty cells as VARCHAR instead of DOUBLE when trying to automatically infer column types.</description>
+          </parameter>
+        </parameters>
+        
+        <type_inference>
+          <description>Because Excel itself only really stores numbers or strings in cells, and does not enforce that all cells in a column are of the same type, the excel extension has to do some guesswork to "infer" and decide the types of the columns when importing an Excel sheet.</description>
+          <notes>
+            <note>Almost all columns are inferred as either DOUBLE or VARCHAR</note>
+            <note>TIMESTAMP, TIME, DATE and BOOLEAN types are inferred when possible based on the format applied to the cell.</note>
+            <note>Text cells containing TRUE and FALSE are inferred as BOOLEAN.</note>
+            <note>Empty cells are considered to be DOUBLE by default, unless the empty_as_varchar option is set to true, in which case they are typed as VARCHAR.</note>
+            <note>If the all_varchar option is set to true, none of the above applies and all cells are read as VARCHAR.</note>
+          </notes>
+          
+          <process>
+            <scenario name="no_explicit_types">
+              <description>When no types are specified explicitly (using read_xlsx), types are inferred based on the first "data" row:</description>
+              <rules>
+                <rule condition="no_explicit_range">
+                  <description>If no explicit range is given:</description>
+                  <sub_rule>The first row after the header if a header is found or forced by the header option</sub_rule>
+                  <sub_rule>The first non-empty row in the sheet if no header is found or forced</sub_rule>
+                </rule>
+                <rule condition="explicit_range">
+                  <description>If an explicit range is given:</description>
+                  <sub_rule>The second row of the range if a header is found in the first row or forced by the header option</sub_rule>
+                  <sub_rule>The first row of the range if no header is found or forced</sub_rule>
+                </rule>
+              </rules>
+              <note>This can sometimes lead to issues if the first "data row" is not representative of the rest of the sheet (e.g., it contains empty cells) in which case the ignore_errors or empty_as_varchar options can be used to work around this.</note>
+            </scenario>
+            
+            <scenario name="copy_statement">
+              <description>When using COPY TO ... FROM '⟨file⟩.xlsx', no type inference is done and the types of the resulting columns are determined by the types of the columns in the table being copied to. All cells will simply be converted by casting from DOUBLE or VARCHAR to the target column type.</description>
+            </scenario>
+          </process>
+        </type_inference>
+      </operation>
+      
+      <operation name="writing">
+        <description>Writing XLSX Files</description>
+        <example>
+          <code>
+CREATE TABLE test AS
+    SELECT *
+    FROM (VALUES (1, 2), (3, 4)) AS t(a, b);
+COPY test TO 'test.xlsx' WITH (FORMAT xlsx, HEADER true);
+          </code>
+        </example>
+        
+        <parameters>
+          <parameter name="header">
+            <type>BOOLEAN</type>
+            <default>false</default>
+            <description>Whether to write the column names as the first row in the sheet</description>
+          </parameter>
+          <parameter name="sheet">
+            <type>VARCHAR</type>
+            <default>Sheet1</default>
+            <description>The name of the sheet in the xlsx file to write.</description>
+          </parameter>
+          <parameter name="sheet_row_limit">
+            <type>INTEGER</type>
+            <default>1048576</default>
+            <description>The maximum number of rows in a sheet. An error is thrown if this limit is exceeded.</description>
+            <warning>Many tools only support a maximum of 1,048,576 rows in a sheet, so increasing the sheet_row_limit may render the resulting file unreadable by other software.</warning>
+          </parameter>
+        </parameters>
+        
+        <type_conversions>
+          <description>Because XLSX files only really support storing numbers or strings – the equivalent of VARCHAR and DOUBLE, the following type conversions are applied when writing XLSX files.</description>
+          <conversion type="numeric">
+            <description>Numeric types are cast to DOUBLE when writing to an XLSX file.</description>
+          </conversion>
+          <conversion type="temporal">
+            <description>Temporal types (TIMESTAMP, DATE, TIME, etc.) are converted to excel "serial" numbers, that is the number of days since 1900-01-01 for dates and the fraction of a day for times. These are then styled with a "number format" so that they appear as dates or times when opened in Excel.</description>
+          </conversion>
+          <conversion type="timezone">
+            <description>TIMESTAMP_TZ and TIME_TZ are cast to UTC TIMESTAMP and TIME respectively, with the timezone information being lost.</description>
+          </conversion>
+          <conversion type="boolean">
+            <description>BOOLEANs are converted to 1 and 0, with a "number format" applied to make them appear as TRUE and FALSE in Excel.</description>
+          </conversion>
+          <conversion type="other">
+            <description>All other types are cast to VARCHAR and then written as text cells.</description>
+          </conversion>
+        </type_conversions>
+      </operation>
+    </operations>
+  </data_source>
+
+  <!-- HTTP(S) Support -->
+  <data_source type="http">
+    <name>HTTP(S) Support</name>
+    <description>With the httpfs extension, it is possible to directly query files over the HTTP(S) protocol. This works for all files supported by DuckDB or its various extensions, and provides read-only access.</description>
+    
+    <usage>
+      <example>
+        <code>
+SELECT *
+FROM 'https://domain.tld/file.extension';
+        </code>
+      </example>
+    </usage>
+    
+    <features>
+      <feature name="partial_reading">
+        <description>For CSV files, files will be downloaded entirely in most cases, due to the row-based nature of the format. For Parquet files, DuckDB supports partial reading, i.e., it can use a combination of the Parquet metadata and HTTP range requests to only download the parts of the file that are actually required by the query.</description>
+        <examples>
+          <example>
+            <description>Only read the Parquet metadata and the data for the `column_a` column</description>
+            <code>
+SELECT column_a
+FROM 'https://domain.tld/file.parquet';
+            </code>
+          </example>
+          <example>
+            <description>In some cases, no actual data needs to be read at all as they only require reading the metadata</description>
+            <code>
+SELECT count(*)
+FROM 'https://domain.tld/file.parquet';
+            </code>
+          </example>
+        </examples>
+      </feature>
+      
+      <feature name="multiple_files">
+        <description>Scanning multiple files over HTTP(S) is also supported</description>
+        <example>
+          <code>
+SELECT *
+FROM read_parquet([
+    'https://domain.tld/file1.parquet',
+    'https://domain.tld/file2.parquet'
+]);
+          </code>
+        </example>
+      </feature>
+    </features>
+    
+    <authentication>
+      <method name="bearer_token">
+        <description>To authenticate for an HTTP(S) endpoint using a bearer token</description>
+        <example>
+          <code>
+CREATE SECRET http_auth (
+    TYPE http,
+    BEARER_TOKEN 'token'
+);
+          </code>
+        </example>
+      </method>
+      
+      <method name="custom_headers">
+        <description>To authenticate for an HTTP(S) endpoint using custom headers</description>
+        <example>
+          <code>
+CREATE SECRET http_auth (
+    TYPE http,
+    EXTRA_HTTP_HEADERS MAP {
+        'Authorization': 'Bearer token'
+    }
+);
+          </code>
+        </example>
+      </method>
+    </authentication>
+    
+    <proxy>
+      <method name="secrets_manager">
+        <description>Add an HTTP proxy using the Secrets Manager</description>
+        <example>
+          <code>
+CREATE SECRET http_proxy (
+    TYPE http,
+    HTTP_PROXY 'http_proxy_url',
+    HTTP_PROXY_USERNAME 'username',
+    HTTP_PROXY_PASSWORD 'password'
+);
+          </code>
+        </example>
+      </method>
+      
+      <method name="configuration">
+        <description>Add an HTTP proxy via configuration options</description>
+        <example>
+          <code>
+SET http_proxy = 'http_proxy_url';
+SET http_proxy_username = 'username';
+SET http_proxy_password = 'password';
+          </code>
+        </example>
+      </method>
+    </proxy>
+    
+    <custom_certificates>
+      <description>To use the httpfs extension with a custom certificate file</description>
+      <example>
+        <code>
+LOAD httpfs;
+SET ca_cert_file = 'certificate_file';
+SET enable_server_cert_verification = true;
+        </code>
+      </example>
+    </custom_certificates>
+  </data_source>
+
+  <!-- CSV Import -->
+  <data_source type="csv">
+    <name>CSV Import</name>
+    <description>CSV loading, i.e., importing CSV files to the database, is a very common, and yet surprisingly tricky, task. While CSVs seem simple on the surface, there are a lot of inconsistencies found within CSV files that can make loading them a challenge.</description>
+    
+    <examples>
+      <example>
+        <name>Read a CSV file from disk, auto-infer options</name>
+        <code>
+SELECT * FROM 'flights.csv';
+        </code>
+      </example>
+      
+      <example>
+        <name>Use the read_csv function with custom options</name>
+        <code>
+SELECT *
+FROM read_csv('flights.csv',
+    delim = '|',
+    header = true,
+    columns = {
+        'FlightDate': 'DATE',
+        'UniqueCarrier': 'VARCHAR',
+        'OriginCityName': 'VARCHAR',
+        'DestCityName': 'VARCHAR'
+    });
+        </code>
+      </example>
+      
+      <example>
+        <name>Read a CSV from stdin, auto-infer options</name>
+        <code>
+cat flights.csv | duckdb -c "SELECT * FROM read_csv('/dev/stdin')"
+        </code>
+      </example>
+      
+      <example>
+        <name>Read a CSV file into a table</name>
+        <code>
+CREATE TABLE ontime (
+    FlightDate DATE,
+    UniqueCarrier VARCHAR,
+    OriginCityName VARCHAR,
+    DestCityName VARCHAR
+);
+COPY ontime FROM 'flights.csv';
+        </code>
+      </example>
+      
+      <example>
+        <name>Create a table without specifying the schema manually</name>
+        <code>
+CREATE TABLE ontime AS
+    SELECT * FROM 'flights.csv';
+
+-- Or using FROM-first syntax
+CREATE TABLE ontime AS
+    FROM 'flights.csv';
+        </code>
+      </example>
+    </examples>
+    
+    <auto_detection>
+      <description>The DuckDB CSV reader can automatically infer which configuration flags to use by analyzing the CSV file using the CSV sniffer. This will work correctly in most situations, and should be the first option attempted. In rare situations where the CSV reader cannot figure out the correct configuration it is possible to manually configure the CSV reader to correctly parse the CSV file.</description>
+      <process>
+        <steps>
+          <step>Detect the dialect of the CSV file (delimiter, quoting rule, escape)</step>
+          <step>Detect the types of each of the columns</step>
+          <step>Detect whether or not the file has a header row</step>
+        </steps>
+        <note>By default the system will try to auto-detect all options. However, options can be individually overridden by the user.</note>
+      </process>
+      
+      <sample_size>
+        <description>The type detection works by operating on a sample of the file. The size of the sample can be modified by setting the sample_size parameter.</description>
+        <default>20,480 rows</default>
+        <example>
+          <code>
+SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+          </code>
+          <note>Setting the sample_size parameter to -1 means the entire file is read for sampling.</note>
+        </example>
+        <sampling_process>
+          <scenario type="regular_file">
+            <description>For regular files on disk, DuckDB will jump into the file and try to sample from different locations in the file.</description>
+          </scenario>
+          <scenario type="streaming">
+            <description>For files where DuckDB cannot jump (such as a .gz compressed CSV file or stdin), samples are taken only from the beginning of the file.</description>
+          </scenario>
+        </sampling_process>
+      </sample_size>
+      
+      <sniff_csv>
+        <description>It is possible to run the CSV sniffer as a separate step using the sniff_csv(filename) function, which returns the detected CSV properties as a table with a single row.</description>
+        <examples>
+          <example>
+            <code>FROM sniff_csv('my_file.csv');</code>
+          </example>
+          <example>
+            <code>FROM sniff_csv('my_file.csv', sample_size = 1000);</code>
+          </example>
+        </examples>
+        <output_columns>
+          <column name="Delimiter">
+            <description>Delimiter</description>
+            <example>,</example>
+          </column>
+          <column name="Quote">
+            <description>Quote character</description>
+            <example>"</example>
+          </column>
+          <column name="Escape">
+            <description>Escape</description>
+            <example>\</example>
+          </column>
+          <column name="NewLineDelimiter">
+            <description>New-line delimiter</description>
+            <example>\r\n</example>
+          </column>
+          <column name="Comment">
+            <description>Comment character</description>
+            <example>#</example>
+          </column>
+          <column name="SkipRows">
+            <description>Number of rows skipped</description>
+            <example>1</example>
+          </column>
+          <column name="HasHeader">
+            <description>Whether the CSV has a header</description>
+            <example>true</example>
+          </column>
+          <column name="Columns">
+            <description>Column types encoded as a LIST of STRUCTs</description>
+            <example>({'name': 'VARCHAR', 'age': 'BIGINT'})</example>
+          </column>
+          <column name="DateFormat">
+            <description>Date format</description>
+            <example>%d/%m/%Y</example>
+          </column>
+          <column name="TimestampFormat">
+            <description>Timestamp Format</description>
+            <example>%Y-%m-%dT%H:%M:%S.%f</example>
+          </column>
+          <column name="UserArguments">
+            <description>Arguments used to invoke sniff_csv</description>
+            <example>sample_size = 1000</example>
+          </column>
+          <column name="Prompt">
+            <description>Prompt ready to be used to read the CSV</description>
+            <example>FROM read_csv('my_file.csv', auto_detect=false, delim=',', ...)</example>
+            <note>The Prompt column contains a SQL command with the configurations detected by the sniffer.</note>
+          </column>
+        </output_columns>
+      </sniff_csv>
+      
+      <detection_steps>
+        <step name="dialect_detection">
+          <description>Dialect detection works by attempting to parse the samples using the set of considered values. The detected dialect is the dialect that has (1) a consistent number of columns for each row, and (2) the highest number of columns for each row.</description>
+          <considered_values>
+            <parameter name="delim">
+              <values>, | ; \t</values>
+            </parameter>
+            <parameter name="quote">
+              <values>" ' (empty)</values>
+            </parameter>
+            <parameter name="escape">
+              <values>" ' \ (empty)</values>
+            </parameter>
+          </considered_values>
+          <example>
+            <description>Consider the example file flights.csv with content:
+FlightDate|UniqueCarrier|OriginCityName|DestCityName
+1988-01-01|AA|New York, NY|Los Angeles, CA</description>
+            <process>
+              <step>If we split by a | every row is split into 4 columns</step>
+              <step>If we split by a , rows 2-4 are split into 3 columns, while the first row is split into 1 column</step>
+              <step>If we split by ;, every row is split into 1 column</step>
+              <step>If we split by \t, every row is split into 1 column</step>
+              <conclusion>The system selects the | as the delimiter. All rows are split into the same amount of columns, and there is more than one column per row meaning the delimiter was actually found in the CSV file.</conclusion>
+            </process>
+          </example>
+        </step>
+        
+        <step name="type_detection">
+          <description>After detecting the dialect, the system will attempt to figure out the types of each of the columns. Note that this step is only performed if we are calling read_csv. In case of the COPY statement the types of the table that we are copying into will be used instead.</description>
+          <process>
+            <description>The type detection works by attempting to convert the values in each column to the candidate types. If the conversion is unsuccessful, the candidate type is removed from the set of candidate types for that column. After all samples have been handled – the remaining candidate type with the highest priority is chosen.</description>
+          </process>
+          <default_candidate_types>
+            <type priority="1">BOOLEAN</type>
+            <type priority="2">BIGINT</type>
+            <type priority="3">DOUBLE</type>
+            <type priority="4">TIME</type>
+            <type priority="5">DATE</type>
+            <type priority="6">TIMESTAMP</type>
+            <type priority="7">VARCHAR</type>
+            <note>Everything can be cast to VARCHAR, therefore, this type has the lowest priority meaning that all columns are converted to VARCHAR if they cannot be cast to anything else.</note>
+          </default_candidate_types>
+          
+          <auto_type_candidates>
+            <description>The set of candidate types that should be considered by the CSV reader can be explicitly specified using the auto_type_candidates option.</description>
+            <additional_types>
+              <type>DECIMAL</type>
+              <type>FLOAT</type>
+              <type>INTEGER</type>
+              <type>SMALLINT</type>
+              <type>TINYINT</type>
+            </additional_types>
+            <example>
+              <code>SELECT * FROM read_csv('csv_file.csv', auto_type_candidates = ['BIGINT', 'DATE']);</code>
+            </example>
+          </auto_type_candidates>
+          
+          <all_varchar>
+            <description>Type detection can be entirely disabled by using the all_varchar option. If this is set all columns will remain as VARCHAR (as they originally occur in the CSV file).</description>
+          </all_varchar>
+          
+          <note>Using quote characters vs. no quote characters (e.g., "42" and 42) does not make a difference for type detection. Quoted fields will not be converted to VARCHAR, instead, the sniffer will try to find the type candidate with the highest priority.</note>
+        </step>
+        
+        <step name="override_type_detection">
+          <description>The detected types can be individually overridden using the types option.</description>
+          <options>
+            <option type="list">
+              <description>A list of type definitions that overrides the types of the columns in-order of occurrence in the CSV file.</description>
+              <example>types = ['INTEGER', 'VARCHAR', 'DATE']</example>
+            </option>
+            <option type="map">
+              <description>A name → type map which overrides options of individual columns.</description>
+              <example>types = {'quarter': 'INTEGER'}</example>
+            </option>
+          </options>
+          <note>The set of column types that may be specified using the types option is not as limited as the types available for the auto_type_candidates option: any valid type definition is acceptable to the types-option.</note>
+          <tip>The sniff_csv() function's Column field returns a struct with column names and types that can be used as a basis for overriding types.</tip>
+        </step>
+        
+        <step name="header_detection">
+          <description>Header detection works by checking if the candidate header row deviates from the other rows in the file in terms of types. For example, in flights.csv, we can see that the header row consists of only VARCHAR columns – whereas the values contain a DATE value for the FlightDate column. As such – the system defines the first row as the header row and extracts the column names from the header row.</description>
+          <note>In files that do not have a header row, the column names are generated as column0, column1, etc.</note>
+          <warning>Headers cannot be detected correctly if all columns are of type VARCHAR – as in this case the system cannot distinguish the header row from the other rows in the file. In this case, the system assumes the file has a header. This can be overridden by setting the header option to false.</warning>
+        </step>
+        
+        <step name="dates_and_timestamps">
+          <description>DuckDB supports the ISO 8601 format format by default for timestamps, dates and times. Unfortunately, not all dates and times are formatted using this standard. For that reason, the CSV reader also supports the dateformat and timestampformat options.</description>
+          <auto_detection>
+            <description>As part of the auto-detection, the system tries to figure out if dates and times are stored in a different representation. This is not always possible – as there are ambiguities in the representation. For example, the date 01-02-2000 can be parsed as either January 2nd or February 1st. Often these ambiguities can be resolved. For example, if we later encounter the date 21-02-2000 then we know that the format must have been DD-MM-YYYY. MM-DD-YYYY is no longer possible as there is no 21nd month.</description>
+            <fallback>If the ambiguities cannot be resolved by looking at the data the system has a list of preferences for which date format to use. If the system chooses incorrectly, the user can specify the dateformat and timestampformat options manually.</fallback>
+          </auto_detection>
+          
+          <formats>
+            <date>
+              <format priority="1">ISO 8601</format>
+              <format priority="2">%y-%m-%d</format>
+              <format priority="3">%Y-%m-%d</format>
+              <format priority="4">%d-%m-%y</format>
+              <format priority="5">%d-%m-%Y</format>
+              <format priority="6">%m-%d-%y</format>
+              <format priority="7">%m-%d-%Y</format>
+              <note>Higher entries are chosen over lower entries in case of ambiguities.</note>
+            </date>
+            
+            <timestamp>
+              <format priority="1">ISO 8601</format>
+              <format priority="2">%y-%m-%d %H:%M:%S</format>
+              <format priority="3">%Y-%m-%d %H:%M:%S</format>
+              <format priority="4">%d-%m-%y %H:%M:%S</format>
+              <format priority="5">%d-%m-%Y %H:%M:%S</format>
+              <format priority="6">%m-%d-%y %I:%M:%S %p</format>
+              <format priority="7">%m-%d-%Y %I:%M:%S %p</format>
+              <format priority="8">%Y-%m-%d %H:%M:%S.%f</format>
+              <note>Higher entries are chosen over lower entries in case of ambiguities.</note>
+            </timestamp>
+          </formats>
+        </step>
+      </detection_steps>
+    </auto_detection>
+    
+    <faulty_csv>
+      <description>CSV files can come in all shapes and forms, with some presenting many errors that make the process of cleanly reading them inherently difficult. To help users read these files, DuckDB supports detailed error messages, the ability to skip faulty lines, and the possibility of storing faulty lines in a temporary table to assist users with a data cleaning step.</description>
+      
+      <structural_errors>
+        <description>DuckDB detects the following error types</description>
+        <error type="CAST">
+          <description>Casting errors occur when a column in the CSV file cannot be cast to the expected schema value.</description>
+          <example>For a table with columns (name VARCHAR, birth_date DATE), the line "Pedro,The 90s" would cause an error since the string "The 90s" cannot be cast to a date.</example>
+        </error>
+        <error type="MISSING_COLUMNS">
+          <description>This error occurs if a line in the CSV file has fewer columns than expected.</description>
+          <example>For a table expecting two columns, a row with just one value, e.g., "Pedro," would cause this error.</example>
+        </error>
+        <error type="TOO_MANY_COLUMNS">
+          <description>This error occurs if a line in the CSV has more columns than expected.</description>
+          <example>For a table expecting two columns, any line with more than two columns would cause this error, e.g., "Pedro,01-01-1992,pdet."</example>
+        </error>
+        <error type="UNQUOTED_VALUE">
+          <description>Quoted values in CSV lines must always be unquoted at the end; if a quoted value remains quoted throughout, it will cause an error.</description>
+          <example>Assuming the scanner uses quote='"', the line "pedro"holanda, 01-01-1992 would present an unquoted value error.</example>
+        </error>
+        <error type="LINE_SIZE_OVER_MAXIMUM">
+          <description>DuckDB has a parameter that sets the maximum line size a CSV file can have, which by default is set to 2,097,152 bytes.</description>
+          <example>Assuming the scanner is set to max_line_size = 25, the line "Pedro Holanda, 01-01-1992" would produce an error, as it exceeds 25 bytes.</example>
+        </error>
+        <error type="INVALID_UNICODE">
+          <description>DuckDB only supports UTF-8 strings; thus, lines containing non-UTF-8 characters will produce an error.</description>
+          <example>The line "pedro\xff\xff, 01-01-1992" would be problematic.</example>
+        </error>
+      </structural_errors>
+      
+      <error_messages>
+        <description>By default, when performing a CSV read, if any structural errors are encountered, the scanner will immediately stop the scanning process and throw the error to the user. These errors are designed to provide as much information as possible to allow users to evaluate them directly in their CSV file.</description>
+        <example>
+          <code>
+Conversion Error:
+CSV Error on Line: 5648
+Original Line: Pedro,The 90s
+Error when converting column "birth_date". date field value out of range: "The 90s", expected format is (DD-MM-YYYY)
+
+Column date is being converted as type DATE
+This type was auto-detected from the CSV file.
+Possible solutions:
+* Override the type for this column manually by setting the type explicitly, e.g. types={'birth_date': 'VARCHAR'}
+* Set the sample size to a larger value to enable the auto-detection to scan more values, e.g. sample_size=-1
+* Use a COPY statement to automatically derive types from an existing table.
+
+  file= people.csv
+  delimiter = , (Auto-Detected)
+  quote = " (Auto-Detected)
+  escape = " (Auto-Detected)
+  new_line = \r\n (Auto-Detected)
+  header = true (Auto-Detected)
+  skip_rows = 0 (Auto-Detected)
+  date_format = (DD-MM-YYYY) (Auto-Detected)
+  timestamp_format =  (Auto-Detected)
+  null_padding=0
+  sample_size=20480
+  ignore_errors=false
+  all_varchar=0
+          </code>
+        </example>
+        
+        <components>
+          <component name="error_info">
+            <description>Information regarding where the error occurred, including the line number, the original CSV line, and which field was problematic.</description>
+          </component>
+          <component name="solutions">
+            <description>Potential solutions, such as overriding the type for the problematic column or increasing the sample size.</description>
+          </component>
+          <component name="configuration">
+            <description>The options used in the scanner that can cause errors, indicating whether they were auto-detected or manually set by the user.</description>
+          </component>
+        </components>
+      </error_messages>
+      
+      <ignore_errors>
+        <description>There are cases where CSV files may have multiple structural errors, and users simply wish to skip these and read the correct data. Reading erroneous CSV files is possible by utilizing the ignore_errors option.</description>
+        <example>
+          <code>
+-- This will throw a casting error
+FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+
+-- With ignore_errors set, the second row is skipped
+FROM read_csv(
+    'faulty.csv',
+    columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+    ignore_errors = true
+);
+          </code>
+          <note>With ignore_errors set, rows containing data that would otherwise cause the CSV parser to generate an error will be ignored.</note>
+        </example>
+        <projection_pushdown>
+          <description>The CSV Parser is affected by the projection pushdown optimization. Hence, if we were to select only the name column, both rows would be considered valid, as the casting error on the age would never occur.</description>
+          <example>
+            <code>
+SELECT name
+FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+            </code>
+          </example>
+        </projection_pushdown>
+      </ignore_errors>
+      
+      <rejects_table>
+        <description>Being able to read faulty CSV files is important, but for many data cleaning operations, it is also necessary to know exactly which lines are corrupted and what errors the parser discovered on them. For scenarios like these, it is possible to use DuckDB's CSV Rejects Table feature.</description>
+        <tables>
+          <table name="reject_scans">
+            <description>Stores information regarding the parameters of the CSV Scanner</description>
+            <columns>
+              <column name="scan_id">
+                <description>The internal ID used in DuckDB to represent that scanner</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="file_id">
+                <description>A scanner might happen over multiple files, so the file_id represents a unique file in a scanner</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="file_path">
+                <description>The file path</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="delimiter">
+                <description>The delimiter used e.g., ;</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="quote">
+                <description>The quote used e.g., "</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="escape">
+                <description>The quote used e.g., "</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="newline_delimiter">
+                <description>The newline delimiter used e.g., \r\n</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="skip_rows">
+                <description>If any rows were skipped from the top of the file</description>
+                <type>UINTEGER</type>
+              </column>
+              <column name="has_header">
+                <description>If the file has a header</description>
+                <type>BOOLEAN</type>
+              </column>
+              <column name="columns">
+                <description>The schema of the file (i.e., all column names and types)</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="date_format">
+                <description>The format used for date types</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="timestamp_format">
+                <description>The format used for timestamp types</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="user_arguments">
+                <description>Any extra scanner parameters manually set by the user</description>
+                <type>VARCHAR</type>
+              </column>
+            </columns>
+          </table>
+          
+          <table name="reject_errors">
+            <description>Stores information regarding each CSV faulty line and in which CSV Scanner they happened.</description>
+            <columns>
+              <column name="scan_id">
+                <description>The internal ID used in DuckDB to represent that scanner, used to join with reject scans tables</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="file_id">
+                <description>The file_id represents a unique file in a scanner, used to join with reject scans tables</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="line">
+                <description>Line number, from the CSV File, where the error occurred.</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="line_byte_position">
+                <description>Byte Position of the start of the line, where the error occurred.</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="byte_position">
+                <description>Byte Position where the error occurred.</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="column_idx">
+                <description>If the error happens in a specific column, the index of the column.</description>
+                <type>UBIGINT</type>
+              </column>
+              <column name="column_name">
+                <description>If the error happens in a specific column, the name of the column.</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="error_type">
+                <description>The type of the error that happened.</description>
+                <type>ENUM</type>
+              </column>
+              <column name="csv_line">
+                <description>The original CSV line.</description>
+                <type>VARCHAR</type>
+              </column>
+              <column name="error_message">
+                <description>The error message produced by DuckDB.</description>
+                <type>VARCHAR</type>
+              </column>
+            </columns>
+          </table>
+        </tables>
+        
+        <parameters>
+          <parameter name="store_rejects">
+            <description>If set to true, any errors in the file will be skipped and stored in the default rejects temporary tables.</description>
+            <type>BOOLEAN</type>
+            <default>False</default>
+          </parameter>
+          <parameter name="rejects_scan">
+            <description>Name of a temporary table where the information of the scan information of faulty CSV file are stored.</description>
+            <type>VARCHAR</type>
+            <default>reject_scans</default>
+          </parameter>
+          <parameter name="rejects_table">
+            <description>Name of a temporary table where the information of the faulty lines of a CSV file are stored.</description>
+            <type>VARCHAR</type>
+            <default>reject_errors</default>
+          </parameter>
+          <parameter name="rejects_limit">
+            <description>Upper limit on the number of faulty records from a CSV file that will be recorded in the rejects table. 0 is used when no limit should be applied.</description>
+            <type>BIGINT</type>
+            <default>0</default>
+          </parameter>
+        </parameters>
+        
+        <example>
+          <code>
+FROM read_csv(
+    'faulty.csv',
+    columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+    store_rejects = true
+);
+
+-- Query the reject_scans table
+FROM reject_scans;
+
+-- Query the reject_errors table
+FROM reject_errors;
+          </code>
+          <note>If a line has multiple errors, multiple entries will be stored for the same line, one for each error.</note>
+        </example>
+      </rejects_table>
+    </faulty_csv>
+    
+    <csv_functions>
+      <function name="read_csv">
+        <description>The read_csv automatically attempts to figure out the correct configuration of the CSV reader using the CSV sniffer. It also automatically deduces types of columns.</description>
+        <header_behavior>If the CSV file has a header, it will use the names found in that header to name the columns. Otherwise, the columns will be named column0, column1, column2, ...</header_behavior>
+        <examples>
+          <example>
+            <code>
+SELECT * FROM read_csv('flights.csv');
+            </code>
+            <output>
+FlightDate  UniqueCarrier  OriginCityName   DestCityName
+1988-01-01  AA             New York, NY     Los Angeles, CA
+1988-01-02  AA             New York, NY     Los Angeles, CA
+1988-01-03  AA             New York, NY     Los Angeles, CA
+            </output>
+            <note>The path can either be a relative path (relative to the current working directory) or an absolute path.</note>
+          </example>
+          <example>
+            <name>Creating a persistent table</name>
+            <code>
+CREATE TABLE ontime AS
+    SELECT * FROM read_csv('flights.csv');
+DESCRIBE ontime;
+            </code>
+            <output>
+column_name     column_type  null  key   default  extra
+FlightDate      DATE         YES   NULL  NULL     NULL
+UniqueCarrier   VARCHAR      YES   NULL  NULL     NULL
+OriginCityName  VARCHAR      YES   NULL  NULL     NULL
+DestCityName    VARCHAR      YES   NULL  NULL     NULL
+            </output>
+          </example>
+          <example>
+            <name>With sampling</name>
+            <code>
+SELECT * FROM read_csv('flights.csv', sample_size = 20_000);
+            </code>
+          </example>
+          <example>
+            <name>Bypassing automatic detection</name>
+            <code>
+SELECT * FROM read_csv('flights.csv', header = true);
+            </code>
+            <note>If we set delim / sep, quote, escape, or header explicitly, we can bypass the automatic detection of this particular parameter.</note>
+          </example>
+        </examples>
+      </function>
+      
+      <function name="COPY">
+        <description>The COPY statement can be used to load data from a CSV file into a table. This statement has the same syntax as the one used in PostgreSQL.</description>
+        <process>To load the data using the COPY statement, we must first create a table with the correct schema (which matches the order of the columns in the CSV file and uses types that fit the values in the CSV file). COPY detects the CSV's configuration options automatically.</process>
+        <examples>
+          <example>
+            <code>
+CREATE TABLE ontime (
+    flightdate DATE,
+    uniquecarrier VARCHAR,
+    origincityname VARCHAR,
+    destcityname VARCHAR
+);
+COPY ontime FROM 'flights.csv';
+SELECT * FROM ontime;
+            </code>
+            <output>
+flightdate  uniquecarrier  origincityname   destcityname
+1988-01-01  AA             New York, NY     Los Angeles, CA
+1988-01-02  AA             New York, NY     Los Angeles, CA
+1988-01-03  AA             New York, NY     Los Angeles, CA
+            </output>
+          </example>
+          <example>
+            <name>Manually specifying CSV format</name>
+            <code>
+CREATE TABLE ontime (flightdate DATE, uniquecarrier VARCHAR, origincityname VARCHAR, destcityname VARCHAR);
+COPY ontime FROM 'flights.csv' (DELIMITER '|', HEADER);
+SELECT * FROM ontime;
+            </code>
+          </example>
+        </examples>
+      </function>
+    </csv_functions>
+    
+    <parameters>
+      <parameter name="all_varchar">
+        <description>Skip type detection and assume all columns are of type VARCHAR. This option is only supported by the read_csv function.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="allow_quoted_nulls">
+        <description>Allow the conversion of quoted values to NULL values</description>
+        <type>BOOL</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="auto_detect">
+        <description>Auto detect CSV parameters.</description>
+        <type>BOOL</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="auto_type_candidates">
+        <description>Types that the sniffer uses when detecting column types. The VARCHAR type is always included as a fallback option.</description>
+        <type>TYPE[]</type>
+        <default>default types</default>
+      </parameter>
+      <parameter name="buffer_size">
+        <description>Size of the buffers used to read files, in bytes. Must be large enough to hold four lines and can significantly impact performance.</description>
+        <type>BIGINT</type>
+        <default>16 * max_line_size</default>
+      </parameter>
+      <parameter name="columns">
+        <description>Column names and types, as a struct (e.g., {'col1': 'INTEGER', 'col2': 'VARCHAR'}). Using this option disables auto detection.</description>
+        <type>STRUCT</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="comment">
+        <description>Character used to initiate comments. Lines starting with a comment character (optionally preceded by space characters) are completely ignored; other lines containing a comment character are parsed only up to that point.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="compression">
+        <description>Method used to compress CSV files. By default this is detected automatically from the file extension (e.g., t.csv.gz will use gzip, t.csv will use none). Options are none, gzip, zstd.</description>
+        <type>VARCHAR</type>
+        <default>auto</default>
+      </parameter>
+      <parameter name="dateformat">
+        <description>Date format used when parsing and writing dates.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="date_format">
+        <description>Alias for dateformat; only available in the COPY statement.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="decimal_separator">
+        <description>Decimal separator for numbers.</description>
+        <type>VARCHAR</type>
+        <default>.</default>
+      </parameter>
+      <parameter name="delim">
+        <description>Delimiter character used to separate columns within each line, e.g., , ; \t. The delimiter character can be up to 4 bytes, e.g., 🦆. Alias for sep.</description>
+        <type>VARCHAR</type>
+        <default>,</default>
+      </parameter>
+      <parameter name="delimiter">
+        <description>Alias for delim; only available in the COPY statement.</description>
+        <type>VARCHAR</type>
+        <default>,</default>
+      </parameter>
+      <parameter name="escape">
+        <description>String used to escape the quote character within quoted values.</description>
+        <type>VARCHAR</type>
+        <default>"</default>
+      </parameter>
+      <parameter name="encoding">
+        <description>Encoding used by the CSV file. Options are utf-8, utf-16, latin-1. Not available in the COPY statement (which always uses utf-8).</description>
+        <type>VARCHAR</type>
+        <default>utf-8</default>
+      </parameter>
+      <parameter name="filename">
+        <description>Add path of the containing file to each row, as a string column named filename. Relative or absolute paths are returned depending on the path or glob pattern provided to read_csv, not just filenames.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="force_not_null">
+        <description>Do not match values in the specified columns against the NULL string. In the default case where the NULL string is empty, this means that empty values are read as zero-length strings instead of NULLs.</description>
+        <type>VARCHAR[]</type>
+        <default>[]</default>
+      </parameter>
+      <parameter name="header">
+        <description>First line of each file contains the column names.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="hive_partitioning">
+        <description>Interpret the path as a Hive partitioned path.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="ignore_errors">
+        <description>Ignore any parsing errors encountered.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="max_line_size or maximum_line_size">
+        <description>Maximum line size, in bytes. Not available in the COPY statement.</description>
+        <type>BIGINT</type>
+        <default>2000000</default>
+      </parameter>
+      <parameter name="names or column_names">
+        <description>Column names, as a list.</description>
+        <type>VARCHAR[]</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="new_line">
+        <description>New line character(s). Options are '\r','\n', or '\r\n'. The CSV parser only distinguishes between single-character and double-character line delimiters. Therefore, it does not differentiate between '\r' and '\n'.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="normalize_names">
+        <description>Normalize column names. This removes any non-alphanumeric characters from them. Column names that are reserved SQL keywords are prefixed with an underscore character (_).</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="null_padding">
+        <description>Pad the remaining columns on the right with NULL values when a line lacks columns.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="nullstr or null">
+        <description>Strings that represent a NULL value.</description>
+        <type>VARCHAR or VARCHAR[]</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="parallel">
+        <description>Use the parallel CSV reader.</description>
+        <type>BOOL</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="quote">
+        <description>String used to quote values.</description>
+        <type>VARCHAR</type>
+        <default>"</default>
+      </parameter>
+      <parameter name="rejects_scan">
+        <description>Name of the temporary table where information on faulty scans is stored.</description>
+        <type>VARCHAR</type>
+        <default>reject_scans</default>
+      </parameter>
+      <parameter name="rejects_table">
+        <description>Name of the temporary table where information on faulty lines is stored.</description>
+        <type>VARCHAR</type>
+        <default>reject_errors</default>
+      </parameter>
+      <parameter name="rejects_limit">
+        <description>Upper limit on the number of faulty lines per file that are recorded in the rejects table. Setting this to 0 means that no limit is applied.</description>
+        <type>BIGINT</type>
+        <default>0</default>
+      </parameter>
+      <parameter name="sample_size">
+        <description>Number of sample lines for auto detection of parameters.</description>
+        <type>BIGINT</type>
+        <default>20480</default>
+      </parameter>
+      <parameter name="sep">
+        <description>Delimiter character used to separate columns within each line, e.g., , ; \t. The delimiter character can be up to 4 bytes, e.g., 🦆. Alias for delim.</description>
+        <type>VARCHAR</type>
+        <default>,</default>
+      </parameter>
+      <parameter name="skip">
+        <description>Number of lines to skip at the start of each file.</description>
+        <type>BIGINT</type>
+        <default>0</default>
+      </parameter>
+      <parameter name="store_rejects">
+        <description>Skip any lines with errors and store them in the rejects table.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+      <parameter name="strict_mode">
+        <description>Enforces the strictness level of the CSV Reader. When set to true, the parser will throw an error upon encountering any issues. When set to false, the parser will attempt to read structurally incorrect files. It is important to note that reading structurally incorrect files can cause ambiguity; therefore, this option should be used with caution.</description>
+        <type>BOOL</type>
+        <default>true</default>
+      </parameter>
+      <parameter name="timestampformat">
+        <description>Timestamp format used when parsing and writing timestamps.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="timestamp_format">
+        <description>Alias for timestampformat; only available in the COPY statement.</description>
+        <type>VARCHAR</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="types or dtypes or column_types">
+        <description>Column types, as either a list (by position) or a struct (by name).</description>
+        <type>VARCHAR[] or STRUCT</type>
+        <default>(empty)</default>
+      </parameter>
+      <parameter name="union_by_name">
+        <description>Align columns from different files by column name instead of position. Using this option increases memory consumption.</description>
+        <type>BOOL</type>
+        <default>false</default>
+      </parameter>
+    </parameters>
+    
+    <tips>
+      <tip>
+        <name>Override the Header Flag if the Header Is Not Correctly Detected</name>
+        <description>If a file contains only string columns the header auto-detection might fail. Provide the header option to override this behavior.</description>
+        <example>
+          <code>
+SELECT * FROM read_csv('flights.csv', header = true);
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Provide Names if the File Does Not Contain a Header</name>
+        <description>If the file does not contain a header, names will be auto-generated by default. You can provide your own names with the names option.</description>
+        <example>
+          <code>
+SELECT * FROM read_csv('flights.csv', names = ['DateOfFlight', 'CarrierName']);
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Override the Types of Specific Columns</name>
+        <description>The types flag can be used to override types of only certain columns by providing a struct of name → type mappings.</description>
+        <example>
+          <code>
+SELECT * FROM read_csv('flights.csv', types = {'FlightDate': 'DATE'});
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Use COPY When Loading Data into a Table</name>
+        <description>The COPY statement copies data directly into a table. The CSV reader uses the schema of the table instead of auto-detecting types from the file. This speeds up the auto-detection, and prevents mistakes from being made during auto-detection.</description>
+        <example>
+          <code>
+COPY tbl FROM 'test.csv';
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Use union_by_name When Loading Files with Different Schemas</name>
+        <description>The union_by_name option can be used to unify the schema of files that have different or missing columns. For files that do not have certain columns, NULL values are filled in.</description>
+        <example>
+          <code>
+SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Sample Size</name>
+        <description>If the CSV sniffer is not detecting the correct type, try increasing the sample size. The option sample_size = -1 forces the sniffer to read the entire file.</description>
+        <example>
+          <code>
+SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+          </code>
+        </example>
+      </tip>
+      
+      <tip>
+        <name>Handle Different Encodings</name>
+        <description>DuckDB's CSV reader supports UTF-8 (default), UTF-16 and Latin-1 encodings (see the encoding option). To convert files with different encodings, we recommend using the iconv command-line tool.</description>
+        <example>
+          <code>
+iconv -f ISO-8859-2 -t UTF-8 input.csv > input-utf-8.csv
+          </code>
+        </example>
+      </tip>
+    </tips>
+    
+    <order_preservation>
+      <description>The CSV reader respects the preserve_insertion_order configuration option to preserve insertion order.</description>
+      <behavior when="true">The order of the rows in the result set returned by the CSV reader is the same as the order of the corresponding lines read from the file(s).</behavior>
+      <behavior when="false">There is no guarantee that the order is preserved.</behavior>
+      <default>true</default>
+    </order_preservation>
+    
+    <writing>
+      <description>DuckDB can write CSV files using the COPY ... TO statement.</description>
+    </writing>
+  </data_source>
+</duckdb_data_import>

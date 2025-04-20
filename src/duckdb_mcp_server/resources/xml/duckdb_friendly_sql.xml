@@ -1,0 +1,973 @@
+<duckdb_friendly_sql>
+  <metadata>
+    <title>DuckDB Friendly SQL Features</title>
+    <description>Comprehensive reference of DuckDB's SQL extensions and syntactic sugar that make queries more concise, readable and powerful.</description>
+    <version>1.0</version>
+  </metadata>
+
+  <category id="table_operations">
+    <name>Table Creation and Management</name>
+    <description>Features related to creating, modifying, and inspecting tables.</description>
+    
+    <feature id="create_or_replace_table">
+      <name>CREATE OR REPLACE TABLE</name>
+      <syntax>CREATE OR REPLACE TABLE table_name AS query</syntax>
+      <description>Creates a new table, replacing it if it already exists, avoiding the need for DROP TABLE IF EXISTS statements.</description>
+      <example>
+        <sql>CREATE OR REPLACE TABLE my_table AS SELECT 1 AS id;</sql>
+        <explanation>Creates or replaces the table 'my_table' with a single column 'id' containing the value 1.</explanation>
+      </example>
+      <related_features>
+        <feature_ref id="ctas"/>
+      </related_features>
+    </feature>
+    
+    <feature id="ctas">
+      <name>CREATE TABLE ... AS SELECT (CTAS)</name>
+      <syntax>CREATE TABLE table_name AS SELECT ...</syntax>
+      <description>Creates a new table from a query result without manually defining a schema.</description>
+      <example>
+        <sql>CREATE TABLE star_ships AS SELECT 'Enterprise' AS name, 'NCC-1701' AS registry;</sql>
+        <explanation>Creates a new table 'star_ships' with columns 'name' and 'registry' inferred from the SELECT statement.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="insert_by_name">
+      <name>INSERT INTO ... BY NAME</name>
+      <syntax>INSERT INTO table_name BY NAME SELECT col1, col2</syntax>
+      <description>Allows inserting data using column names instead of positions, making queries more readable and maintainable.</description>
+      <example>
+        <sql>INSERT INTO proverbs BY NAME SELECT 'Resistance is futile' AS borg_proverb;</sql>
+        <explanation>Inserts a new row with the value 'Resistance is futile' in the 'borg_proverb' column, matching by column name rather than position.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="insert_or_ignore">
+      <name>INSERT OR IGNORE INTO</name>
+      <syntax>INSERT OR IGNORE INTO table_name VALUES (...)</syntax>
+      <description>Inserts rows that don't result in a conflict due to UNIQUE or PRIMARY KEY constraints.</description>
+      <example>
+        <sql>INSERT OR IGNORE INTO users VALUES (1, 'picard');</sql>
+        <explanation>Inserts a new row with ID 1 and name 'picard', but ignores the operation if a row with ID 1 already exists.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="insert_or_replace">
+      <name>INSERT OR REPLACE INTO</name>
+      <syntax>INSERT OR REPLACE INTO table_name VALUES (...)</syntax>
+      <description>Inserts rows that don't conflict with constraints, and replaces existing rows where conflicts occur.</description>
+      <example>
+        <sql>INSERT OR REPLACE INTO users VALUES (1, 'picard');</sql>
+        <explanation>Inserts a new row with ID 1 and name 'picard', or replaces an existing row with ID 1.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="describe">
+      <name>DESCRIBE</name>
+      <syntax>DESCRIBE table_name</syntax>
+      <description>Provides a succinct summary of the schema of a table or query.</description>
+      <example>
+        <sql>DESCRIBE trek_facts;</sql>
+        <output>
+          column_name | column_type | null | key | default | extra
+          season_num  | BIGINT      | YES  | NULL| NULL    | NULL
+          episode_num | BIGINT      | YES  | NULL| NULL    | NULL
+          aired_date  | DATE        | YES  | NULL| NULL    | NULL
+        </output>
+        <explanation>Shows metadata about columns in the 'trek_facts' table including their names, types, and constraints.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="summarize">
+      <name>SUMMARIZE</name>
+      <syntax>SUMMARIZE table_or_query</syntax>
+      <description>Returns summary statistics for a table or query, including min/max values, null counts, and approximate unique values.</description>
+      <example>
+        <sql>SUMMARIZE trek_facts;</sql>
+        <explanation>Generates statistics on each column in the 'trek_facts' table, such as min/max values, null counts, and cardinality.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="query_simplification">
+    <name>Query Simplification</name>
+    <description>Features that reduce verbosity and make SQL queries more concise and readable.</description>
+    
+    <feature id="group_by_all">
+      <name>GROUP BY ALL</name>
+      <syntax>SELECT ... FROM ... GROUP BY ALL</syntax>
+      <description>Automatically groups by all non-aggregated columns in the SELECT clause, reducing query verbosity and chance of errors.</description>
+      <example>
+        <sql>
+SELECT
+    systems,
+    planets,
+    cities,
+    sum(scum + villainy) AS total_scum_and_villainy
+FROM star_wars_locations
+GROUP BY ALL;</sql>
+        <equivalent>
+SELECT
+    systems,
+    planets,
+    cities,
+    sum(scum + villainy) AS total_scum_and_villainy
+FROM star_wars_locations
+GROUP BY systems, planets, cities;</equivalent>
+        <explanation>The GROUP BY ALL automatically includes all non-aggregated columns (systems, planets, cities) without having to list them explicitly.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="order_by_all">
+      <name>ORDER BY ALL</name>
+      <syntax>SELECT ... FROM ... ORDER BY ALL</syntax>
+      <description>Orders by all columns in the SELECT clause from left to right, ensuring deterministic results.</description>
+      <example>
+        <sql>
+SELECT
+    age,
+    sum(civility) AS total_civility
+FROM star_wars_universe
+GROUP BY ALL
+ORDER BY ALL;</sql>
+        <equivalent>
+SELECT
+    age,
+    sum(civility) AS total_civility
+FROM star_wars_universe
+GROUP BY age
+ORDER BY age, total_civility;</equivalent>
+        <explanation>Orders results by all selected columns from left to right. Also supports ORDER BY ALL DESC to reverse the sort order.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="select_exclude">
+      <name>SELECT * EXCLUDE</name>
+      <syntax>SELECT * EXCLUDE (column1, column2) FROM table</syntax>
+      <description>Returns all columns except those specified, avoiding the need to list all desired columns.</description>
+      <example>
+        <sql>SELECT * EXCLUDE (jar_jar_binks, midichlorians) FROM star_wars;</sql>
+        <explanation>Returns all columns from the 'star_wars' table except for 'jar_jar_binks' and 'midichlorians'.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="select_replace">
+      <name>SELECT * REPLACE</name>
+      <syntax>SELECT * REPLACE (expression1 AS column1, expression2 AS column2) FROM table</syntax>
+      <description>Returns all columns, replacing specified columns with modified expressions.</description>
+      <example>
+        <sql>SELECT * REPLACE (movie_count+3 AS movie_count, show_count*1000 AS show_count) FROM star_wars_owned_by_disney;</sql>
+        <explanation>Returns all columns from the table, but replaces 'movie_count' with movie_count+3 and 'show_count' with show_count*1000.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="union_by_name">
+      <name>UNION BY NAME</name>
+      <syntax>query1 UNION [ALL] BY NAME query2</syntax>
+      <description>Combines tables based on column names rather than position, allowing union of tables with different column orders or counts.</description>
+      <example>
+        <sql>
+SELECT 
+    'Revenge is a dish best served cold' AS klingon_proverb 
+UNION ALL BY NAME 
+SELECT 
+    'You will be assimilated' AS borg_proverb,
+    'If winning is not important, why keep score?' AS klingon_proverb;</sql>
+        <explanation>Matches columns by name rather than position, allowing the second query to include columns not in the first query.</explanation>
+        <output>
+klingon_proverb                           | borg_proverb
+-----------------------------------------|----------------
+Revenge is a dish best served cold        | NULL
+If winning is not important, why keep score? | You will be assimilated
+        </output>
+      </example>
+    </feature>
+    
+    <feature id="prefix_aliases">
+      <name>Prefix aliases</name>
+      <syntax>SELECT alias_name: expression FROM table</syntax>
+      <description>Allows more readable column aliases using colon notation instead of AS keyword.</description>
+      <example>
+        <sql>SELECT x: 42 FROM tbl;</sql>
+        <equivalent>SELECT 42 AS x FROM tbl;</equivalent>
+        <explanation>Creates an alias 'x' for the expression '42' using a more concise syntax.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="from_first">
+      <name>FROM-First Syntax</name>
+      <syntax>FROM table [SELECT columns]</syntax>
+      <description>Allows writing queries starting with FROM instead of SELECT, aligning with the logical order of execution.</description>
+      <example>
+        <sql>FROM my_table SELECT my_column;</sql>
+        <equivalent>SELECT my_column FROM my_table;</equivalent>
+        <explanation>Starts the query with the FROM clause, which matches the logical order of query execution.</explanation>
+      </example>
+      <example>
+        <sql>FROM my_table;</sql>
+        <equivalent>SELECT * FROM my_table;</equivalent>
+        <explanation>If SELECT is omitted, it defaults to SELECT *.</explanation>
+      </example>
+      <example>
+        <sql>COPY (FROM trek_facts) TO 'phaser_filled_facts.parquet';</sql>
+        <explanation>Also works with COPY command, placing the query in parentheses.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="table_transformation">
+    <name>Table Transformation</name>
+    <description>Features for pivoting and reshaping data.</description>
+    
+    <feature id="pivot">
+      <name>PIVOT</name>
+      <syntax>PIVOT table ON column USING aggfunc GROUP BY columns</syntax>
+      <description>Transforms data from long format to wide format, creating new columns from values in a single column.</description>
+      <example>
+        <sql>
+PIVOT purchases 
+    ON year 
+    USING sum(count) 
+    GROUP BY item;</sql>
+        <input>
+item              | year | count
+------------------|------|------
+phasers           | 2155 | 1035
+phasers           | 2156 | 25039
+photon torpedoes  | 2155 | 255
+        </input>
+        <output>
+item              | 2155 | 2156
+------------------|------|------
+phasers           | 1035 | 25039
+photon torpedoes  | 255  | 17899
+        </output>
+        <explanation>Transforms rows into columns, with each unique value of 'year' becoming a new column.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="unpivot">
+      <name>UNPIVOT</name>
+      <syntax>UNPIVOT table ON COLUMNS(...) INTO NAME name VALUE value</syntax>
+      <description>Transforms data from wide format to long format, converting columns into rows.</description>
+      <example>
+        <sql>
+UNPIVOT pivoted_purchases
+    ON COLUMNS(* EXCLUDE item)
+    INTO
+        NAME year
+        VALUE count;</sql>
+        <input>
+item              | 2155 | 2156
+------------------|------|------
+phasers           | 1035 | 25039
+photon torpedoes  | 255  | 17899
+        </input>
+        <output>
+item              | year | count
+------------------|------|------
+phasers           | 2155 | 1035
+phasers           | 2156 | 25039
+photon torpedoes  | 2155 | 255
+photon torpedoes  | 2156 | 17899
+        </output>
+        <explanation>Transforms columns into rows, with column names becoming values in the 'year' column.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="column_operations">
+    <name>Column Operations</name>
+    <description>Features for working with columns dynamically.</description>
+    
+    <feature id="column_aliases_in_clauses">
+      <name>Column aliases in WHERE, GROUP BY, and HAVING</name>
+      <syntax>SELECT expression AS alias FROM table WHERE alias = value</syntax>
+      <description>Allows using column aliases defined in SELECT in other clauses (WHERE, GROUP BY, HAVING), eliminating need for subqueries.</description>
+      <example>
+        <sql>
+SELECT
+    only_imperial_storm_troopers_are_so_precise AS nope,
+    turns_out_a_parsec_is_a_distance AS very_speedy,
+    sum(mistakes) AS total_oops
+FROM oops
+WHERE
+    nope = 1
+GROUP BY
+    nope,
+    very_speedy
+HAVING
+    total_oops > 0;</sql>
+        <explanation>Uses column aliases 'nope', 'very_speedy', and 'total_oops' in WHERE, GROUP BY, and HAVING clauses. Note: Column aliases cannot be used in JOIN ON clauses.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="reusable_column_aliases">
+      <name>Reusable Column Aliases</name>
+      <syntax>SELECT expr1 AS alias1, func(alias1) AS alias2 FROM table</syntax>
+      <description>Allows using column aliases defined earlier in the same SELECT statement for subsequent columns.</description>
+      <example>
+        <sql>
+SELECT 
+    'These are the voyages of the starship Enterprise...' AS intro,
+    instr(intro, 'starship') AS starship_loc,
+    substr(intro, starship_loc + len('starship') + 1) AS trimmed_intro;</sql>
+        <output>
+intro                                         | starship_loc | trimmed_intro
+----------------------------------------------|--------------|-------------
+These are the voyages of the starship Enterprise... | 30           | Enterprise...
+        </output>
+        <explanation>Defines 'intro', then uses it in 'starship_loc', then uses both in 'trimmed_intro', all in the same SELECT statement.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="columns_regex">
+      <name>COLUMNS() with Regular Expressions</name>
+      <syntax>SELECT COLUMNS('regex_pattern') FROM table</syntax>
+      <description>Selects columns matching a regular expression pattern, enabling dynamic column selection.</description>
+      <example>
+        <sql>
+SELECT
+    episode_num,
+    COLUMNS('.*warp.*')
+FROM trek_facts;</sql>
+        <output>
+episode_num | cnt_warp_speed_orders | highest_warp_speed_issued
+------------|----------------------|-------------------------
+0           | 1                    | 1
+1           | 0                    | 0
+2           | 1                    | 1
+        </output>
+        <explanation>Selects the episode_num column plus any columns containing 'warp' in their name.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="columns_exclude_replace">
+      <name>COLUMNS() with EXCLUDE and REPLACE</name>
+      <syntax>SELECT max(COLUMNS(* EXCLUDE col1)) FROM table</syntax>
+      <description>Dynamically selects columns with exceptions or modifications.</description>
+      <example>
+        <sql>SELECT max(COLUMNS(* EXCLUDE season_num)) FROM trek_facts;</sql>
+        <explanation>Calculates the maximum value for all columns except 'season_num'.</explanation>
+      </example>
+      <example>
+        <sql>SELECT max(COLUMNS(* REPLACE aired_date::timestamp AS aired_date)) FROM trek_facts;</sql>
+        <explanation>Calculates the maximum for all columns, but first converts 'aired_date' to timestamp type.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="columns_lambda">
+      <name>COLUMNS() with Lambda Functions</name>
+      <syntax>SELECT COLUMNS(col -> expression) FROM table</syntax>
+      <description>Applies a lambda function to select columns based on custom criteria.</description>
+      <example>
+        <sql>
+SELECT
+    episode_num,
+    COLUMNS(col -> col LIKE '%warp%')
+FROM trek_facts;</sql>
+        <explanation>Selects columns where the column name matches the LIKE pattern '%warp%', similar to COLUMNS('.*warp.*') but using SQL LIKE syntax.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="advanced_aggregation">
+    <name>Advanced Aggregation</name>
+    <description>Advanced features for grouping and aggregating data.</description>
+    
+    <feature id="filter_clause">
+      <name>FILTER clause</name>
+      <syntax>aggregate_function FILTER (WHERE condition)</syntax>
+      <description>Allows filtering aggregations without affecting non-aggregated columns.</description>
+      <example>
+        <sql>
+SELECT
+    category,
+    COUNT(*) AS total_count,
+    COUNT(*) FILTER (WHERE price > 100) AS expensive_count
+FROM products
+GROUP BY category;</sql>
+        <explanation>Counts all rows for total_count, but only rows with price > 100 for expensive_count, all within the same query.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="grouping_sets">
+      <name>GROUPING SETS, CUBE, ROLLUP</name>
+      <syntax>GROUP BY GROUPING SETS ((col1), (col2), (col1, col2), ())</syntax>
+      <description>Enables advanced multi-level aggregation in a single query.</description>
+      <example>
+        <sql>
+SELECT region, product, SUM(sales) 
+FROM sales
+GROUP BY GROUPING SETS ((region), (product), (region, product), ());</sql>
+        <explanation>Calculates sum(sales) grouped by: region only, product only, region and product together, and all rows (grand total).</explanation>
+      </example>
+    </feature>
+    
+    <feature id="count_shorthand">
+      <name>count() shorthand</name>
+      <syntax>SELECT count() FROM table</syntax>
+      <description>Allows writing count() instead of count(*) for counting rows.</description>
+      <example>
+        <sql>SELECT count() FROM table;</sql>
+        <equivalent>SELECT count(*) FROM table;</equivalent>
+        <explanation>A shorthand for count(*) to count all rows.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="top_n_in_group">
+      <name>Top-N in Group</name>
+      <syntax>SELECT max(column, n) FROM table GROUP BY group_col</syntax>
+      <description>Functions to efficiently get top N values in each group.</description>
+      <example>
+        <sql>SELECT max(val, 3) FROM t1 GROUP BY grp;</sql>
+        <input>
+grp | val
+----|----
+a   | 1
+a   | 2
+a   | 3
+b   | 4
+b   | 5
+b   | 6
+        </input>
+        <output>
+max(val, 3)
+-----------
+[3, 2, 1]
+[6, 5, 4]
+        </output>
+        <explanation>Returns arrays of top 3 values in each group. Also available: min(arg, n), arg_max(arg, val, n), arg_min(arg, val, n), max_by(arg, val, n), min_by(arg, val, n).</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="data_types">
+    <name>Data Types and Identifiers</name>
+    <description>Special data types and identifier handling features.</description>
+    
+    <feature id="case_insensitivity">
+      <name>Case Insensitivity with Case Preservation</name>
+      <syntax>CREATE TABLE tbl(COL1 INT); SELECT col1 FROM tbl;</syntax>
+      <description>Handles identifiers case-insensitively while preserving original case for display.</description>
+      <example>
+        <sql>
+CREATE TABLE mandalorian AS SELECT 1 AS "THIS_IS_THE_WAY";
+SELECT this_is_the_way FROM mandalorian;</sql>
+        <output>
+THIS_IS_THE_WAY
+--------------
+1
+        </output>
+        <explanation>Column can be referenced as 'this_is_the_way' (case-insensitive), but is displayed with its original case 'THIS_IS_THE_WAY'.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="auto_rename_columns">
+      <name>Auto-Increment Duplicate Column Names</name>
+      <syntax>SELECT t1.col, t2.col FROM t1 JOIN t2</syntax>
+      <description>Automatically renames duplicate column names when joining tables.</description>
+      <example>
+        <sql>
+SELECT
+    *
+FROM (
+    SELECT
+        s1.tie_fighter,
+        s2.tie_fighter
+    FROM squadron_one s1
+    CROSS JOIN squadron_two s2
+    ) theyre_coming_in_too_fast;</sql>
+        <output>
+tie_fighter | tie_fighter:1
+------------|-------------
+green_one   | green_two
+        </output>
+        <explanation>The second occurrence of 'tie_fighter' is automatically renamed to 'tie_fighter:1' to avoid duplicate column names.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="map_type">
+      <name>MAP data type</name>
+      <syntax>MAP([keys], [values])</syntax>
+      <description>Native support for key-value mappings.</description>
+      <example>
+        <sql>SELECT MAP([1, 2], ['a', 'b']) AS my_map;</sql>
+        <output>
+my_map
+------
+{1=a, 2=b}
+        </output>
+        <explanation>Creates a map with keys [1, 2] and corresponding values ['a', 'b'].</explanation>
+      </example>
+    </feature>
+    
+    <feature id="union_type">
+      <name>UNION data type</name>
+      <syntax>UNION(tag1 TYPE1, tag2 TYPE2)</syntax>
+      <description>Allows a single column to contain multiple data types, with type tagging.</description>
+      <example>
+        <sql>
+CREATE TABLE movies (
+    movie UNION(num INTEGER, name VARCHAR)
+);
+INSERT INTO movies VALUES
+    ('The Motion Picture'), (2), (3), ('First Contact');
+
+SELECT 
+    movie,
+    union_tag(movie) AS type,
+    movie.name,
+    movie.num
+FROM movies;</sql>
+        <output>
+movie              | type | name               | num
+-------------------|------|--------------------|---------
+The Motion Picture | name | The Motion Picture | NULL
+2                  | num  | NULL               | 2
+3                  | num  | NULL               | 3
+First Contact      | name | First Contact      | NULL
+        </output>
+        <explanation>The 'movie' column can contain either INTEGER or VARCHAR values, with tags identifying the type of each value.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="underscore_separator">
+      <name>Underscores as Digit Separators</name>
+      <syntax>1_000_000</syntax>
+      <description>Allows using underscores to make large numeric literals more readable.</description>
+      <example>
+        <sql>SELECT 1_000_000 AS one_million;</sql>
+        <output>
+one_million
+-----------
+1000000
+        </output>
+        <explanation>Underscores separate digits for readability but don't affect the value.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="nested_types">
+    <name>Lists and Structs</name>
+    <description>Features for working with nested data types.</description>
+    
+    <feature id="list_creation">
+      <name>Simple LIST Creation</name>
+      <syntax>[value1, value2, ...]</syntax>
+      <description>Concise syntax for creating lists using square brackets.</description>
+      <example>
+        <sql>SELECT ['A-Wing', 'B-Wing', 'X-Wing', 'Y-Wing'] AS starfighter_list;</sql>
+        <output>
+starfighter_list
+----------------
+[A-Wing, B-Wing, X-Wing, Y-Wing]
+        </output>
+        <explanation>Creates a list of strings using simple bracket notation. Types are automatically inferred.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="struct_creation">
+      <name>Simple STRUCT Creation</name>
+      <syntax>{key1: value1, key2: value2, ...}</syntax>
+      <description>Concise syntax for creating structs using curly braces.</description>
+      <example>
+        <sql>SELECT {name: 'Star Destroyer', common_misconceptions: 'Can''t in fact destroy a star'} AS star_destroyer_facts;</sql>
+        <output>
+star_destroyer_facts
+--------------------------------------------------
+{name: Star Destroyer, common_misconceptions: Can't in fact destroy a star}
+        </output>
+        <explanation>Creates a struct with named fields using simple curly brace notation. Types are automatically inferred.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="list_slicing">
+      <name>List Slicing</name>
+      <syntax>list[start:end]</syntax>
+      <description>Allows accessing subsets of lists using bracket notation with ranges.</description>
+      <example>
+        <sql>SELECT starfighter_list[2:2] AS dont_forget_the_b_wing FROM (SELECT ['A-Wing', 'B-Wing', 'X-Wing', 'Y-Wing'] AS starfighter_list);</sql>
+        <output>
+dont_forget_the_b_wing
+---------------------
+[B-Wing]
+        </output>
+        <explanation>Extracts elements from index 2 to 2 (just the second element). Note: List indices are 1-based in SQL.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="struct_dot_notation">
+      <name>Struct Dot Notation</name>
+      <syntax>struct.field</syntax>
+      <description>Allows accessing struct fields using convenient dot notation.</description>
+      <example>
+        <sql>SELECT planet.name, planet."Amount of sand" FROM (SELECT {name: 'Tatooine', 'Amount of sand': 'High'} AS planet);</sql>
+        <output>
+name     | Amount of sand
+---------|---------------
+Tatooine | High
+        </output>
+        <explanation>Accesses the 'name' and 'Amount of sand' fields in the 'planet' struct. Double quotes are used for field names with spaces.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="struct_star_notation">
+      <name>STRUCT.* Notation</name>
+      <syntax>SELECT struct.* FROM table</syntax>
+      <description>Expands a struct into individual columns, simplifying access to nested data.</description>
+      <example>
+        <sql>
+WITH damage_report AS (
+    SELECT {'gold_casualties':5, 'blue_casualties':15, 'red_casualties': 10000} AS casualties
+) 
+FROM damage_report
+SELECT 
+    casualties.*;</sql>
+        <output>
+gold_casualties | blue_casualties | red_casualties
+----------------|-----------------|---------------
+5               | 15              | 10000
+        </output>
+        <explanation>Expands the 'casualties' struct into individual columns for each field.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="auto_struct_creation">
+      <name>Automatic Struct Creation</name>
+      <syntax>SELECT table_name FROM table</syntax>
+      <description>Converts table rows to structs by selecting the table name itself.</description>
+      <example>
+        <sql>
+WITH officers AS (
+    SELECT 'Captain' AS rank, 'Jean-Luc Picard' AS name 
+    UNION ALL 
+    SELECT 'Lieutenant Commander', 'Data'
+) 
+FROM officers 
+SELECT officers;</sql>
+        <output>
+officers
+------------------------------------------
+{'rank': Captain, 'name': Jean-Luc Picard}
+{'rank': Lieutenant Commander, 'name': Data}
+        </output>
+        <explanation>Creates a struct for each row by selecting the table name itself, with fields named after column names.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="lambda_functions">
+    <name>Lambda Functions</name>
+    <description>Functions that use anonymous functions to transform or filter data.</description>
+    
+    <feature id="list_transform">
+      <name>list_transform</name>
+      <syntax>list_transform(list, x -> expression)</syntax>
+      <description>Applies a lambda function to each element of a list, returning a new transformed list.</description>
+      <example>
+        <sql>SELECT list_transform(l, x -> x + n) AS result FROM my_lists;</sql>
+        <explanation>Adds value n to each element in list l.</explanation>
+      </example>
+      <example>
+        <sql>SELECT [x + n FOR x IN l] AS result FROM my_lists;</sql>
+        <explanation>Alternative list comprehension syntax that does the same as list_transform.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="list_filter">
+      <name>list_filter</name>
+      <syntax>list_filter(list, (x [, i]) -> condition)</syntax>
+      <description>Filters elements in a list for which the lambda function returns true.</description>
+      <example>
+        <sql>
+-- Remove element at index idx
+CREATE OR REPLACE MACRO remove_idx(l, idx) AS (
+    list_filter(l, (_, i) -> i != idx)
+);</sql>
+        <explanation>Creates a macro that filters a list to exclude the element at index idx. The lambda has two parameters: the element value and its index.</explanation>
+      </example>
+      <example>
+        <sql>
+SELECT 
+    (['Enterprise NCC-1701', 'Voyager NCC-74656', 'Discovery NCC-1031'])
+        .list_filter(x -> x.contains('1701')) AS the_original;</sql>
+        <output>
+the_original
+----------------
+[Enterprise NCC-1701]
+        </output>
+        <explanation>Filters the list to only include elements containing '1701'. Uses function chaining syntax.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="list_reduce">
+      <name>list_reduce</name>
+      <syntax>list_reduce(list, (acc, x [, i]) -> expression)</syntax>
+      <description>Applies a lambda function to accumulate list elements into a single value.</description>
+      <example>
+        <sql>
+-- Calculate weighted sum of BSN (Dutch social security number)
+CREATE OR REPLACE MACRO valid_bsn(bsn) AS (
+    list_reduce(list_reverse(bsn),
+        (x, y, i) -> IF (i = 1, -x, x) + y * (i + 1)) % 11 = 0
+    AND len(bsn) = 9
+);</sql>
+        <explanation>Uses list_reduce to implement a validation algorithm. The lambda function takes the accumulator, current element, and index as parameters.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="list_comprehension">
+      <name>List Comprehensions</name>
+      <syntax>[expr FOR x IN list IF condition]</syntax>
+      <description>Python-inspired syntax for transforming and filtering lists in a single expression.</description>
+      <example>
+        <sql>
+SELECT 
+    [x.string_split(' ')[1] 
+    FOR x IN ['Enterprise NCC-1701', 'Voyager NCC-74656', 'Discovery NCC-1031'] 
+    IF x.contains('1701')] AS ready_to_boldly_go;</sql>
+        <output>
+ready_to_boldly_go
+-----------------
+[Enterprise]
+        </output>
+        <explanation>Creates a new list by splitting each element that contains '1701' and taking the second part. Combines transform and filter operations.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="string_operations">
+    <name>String Operations</name>
+    <description>Features for working with strings.</description>
+    
+    <feature id="string_slicing">
+      <name>String Slicing</name>
+      <syntax>string[start:end]</syntax>
+      <description>Allows extracting substrings using bracket notation with ranges.</description>
+      <example>
+        <sql>SELECT 'I love you! I know'[:-3] AS nearly_soloed;</sql>
+        <output>
+nearly_soloed
+--------------
+I love you! I k
+        </output>
+        <explanation>Extracts characters from start to 3 characters from the end. Note that SQL is 1-indexed, unlike many programming languages.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="string_formatters">
+      <name>String Formatters</name>
+      <syntax>format(template, arg1, arg2, ...) or printf(format_string, arg1, arg2, ...)</syntax>
+      <description>Provides format() and printf() functions for string formatting.</description>
+      <example>
+        <sql>SELECT format('{} {}', 'Hello', 'World');</sql>
+        <output>
+format
+------
+Hello World
+        </output>
+        <explanation>Uses Python-style format strings with {} placeholders.</explanation>
+      </example>
+      <example>
+        <sql>SELECT printf('%s %s', 'Hello', 'World');</sql>
+        <output>
+printf
+------
+Hello World
+        </output>
+        <explanation>Uses C-style printf format specifiers.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="function_chaining">
+    <name>Function Chaining</name>
+    <description>Features for chaining multiple function calls.</description>
+    
+    <feature id="dot_operator">
+      <name>Dot Operator for Function Chaining</name>
+      <syntax>expression.function1().function2()</syntax>
+      <description>Allows chaining functions with dot notation, passing the previous result as the first argument.</description>
+      <example>
+        <sql>
+SELECT 
+    ('Make it so')
+        .upper()
+        .string_split(' ')
+        .list_aggr('string_agg','.')
+        .concat('.') AS im_not_messing_around_number_one;</sql>
+        <output>
+im_not_messing_around_number_one
+-------------------------------
+MAKE.IT.SO.
+        </output>
+        <explanation>
+Chains functions to:
+1. Convert to uppercase: 'MAKE IT SO'
+2. Split by space: ['MAKE', 'IT', 'SO']
+3. Aggregate list with dots between: 'MAKE.IT.SO'
+4. Append a period: 'MAKE.IT.SO.'
+
+Equivalent to nested calls:
+concat(list_aggr(string_split(upper('Make it so'), ' '), 'string_agg', '.'), '.')
+        </explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="joins">
+    <name>Special Join Types</name>
+    <description>Special types of joins supported by DuckDB.</description>
+    
+    <feature id="asof_join">
+      <name>ASOF Joins</name>
+      <syntax>table1 ASOF JOIN table2 ON conditions</syntax>
+      <description>Matches rows based on the nearest value in a specified column, useful for time-series data.</description>
+      <example>
+        <sql>
+SELECT * 
+FROM trades 
+ASOF JOIN quotes 
+ON trades.ticker = quotes.ticker AND trades.time >= quotes.time;</sql>
+        <explanation>For each row in trades, finds the latest (but not future) matching quote for the same ticker. Useful for time-series analysis where timestamps don't exactly match.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="lateral_join">
+      <name>LATERAL Joins</name>
+      <syntax>table1, LATERAL (subquery that can reference table1) AS alias</syntax>
+      <description>Allows subqueries in the FROM clause to reference columns from preceding tables.</description>
+      <example>
+        <sql>
+SELECT c.name, top_products.product_name
+FROM customers c,
+LATERAL (
+    SELECT product_name
+    FROM orders o
+    WHERE o.customer_id = c.id
+    ORDER BY amount DESC
+    LIMIT 3
+) AS top_products;</sql>
+        <explanation>For each customer, finds their top 3 products by order amount. The subquery can reference the customer table.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="positional_join">
+      <name>POSITIONAL Joins</name>
+      <syntax>table1 POSITIONAL JOIN table2</syntax>
+      <description>Joins tables based on row position rather than matching column values.</description>
+      <example>
+        <sql>SELECT * FROM table1 POSITIONAL JOIN table2;</sql>
+        <explanation>Matches the first row of table1 with the first row of table2, the second row with the second row, and so on.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="other_features">
+    <name>Additional Features</name>
+    <description>Other helpful SQL features.</description>
+    
+    <feature id="trailing_commas">
+      <name>Trailing Commas</name>
+      <syntax>SELECT col1, col2, FROM table</syntax>
+      <description>Allows trailing commas in lists of entities and in list literals, simplifying edits.</description>
+      <example>
+        <sql>
+SELECT
+    x_wing,
+    proton_torpedoes,
+    --targeting_computer
+FROM luke_whats_wrong
+GROUP BY
+    x_wing,
+    proton_torpedoes,
+;</sql>
+        <explanation>Allows a trailing comma after the last item in column lists, making it easier to comment out items or add new ones without syntax errors.</explanation>
+      </example>
+      <example>
+        <sql>SELECT ['A-Wing', 'B-Wing', 'C-Wing',] AS fighters;</sql>
+        <explanation>Also works in list literals, allowing a comma after the last element.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="friendly_errors">
+      <name>Friendly Error Messages</name>
+      <description>Provides detailed and helpful error messages, including suggestions for similar column or table names.</description>
+      <example>
+        <sql>SELECT * FROM star_trek;</sql>
+        <error>
+Error: Catalog Error: Table with name star_trek does not exist!
+Did you mean "star_wars"?
+LINE 1: SELECT * FROM star_trek;
+                      ^
+        </error>
+        <explanation>Shows the exact position of the error and suggests a similar table name that does exist.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="json_to_nested">
+      <name>Automatic JSON to Nested Types Conversion</name>
+      <description>Automatically parses JSON into DuckDB's native nested types (lists and structs).</description>
+      <example>
+        <sql>
+SELECT 
+     starfleet[10].model AS starship 
+FROM 'https://raw.githubusercontent.com/vlad-saling/star-trek-ipsum/master/src/content/content.json';</sql>
+        <explanation>Automatically parses JSON data, allowing access to nested arrays and objects using list indexing and struct dot notation.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="implicit_casts">
+      <name>Implicit Type Casts</name>
+      <description>Automatically casts between compatible types when necessary, reducing need for explicit casts.</description>
+      <example>
+        <sql>
+-- Join between integer and varchar values
+SELECT * 
+FROM sith_count_int s_int 
+JOIN sith_count_varchar s_char 
+  ON s_int.sith_count = s_char.sith_count;</sql>
+        <explanation>Automatically casts between INTEGER and VARCHAR when comparing them in a join condition, without requiring explicit CAST functions.</explanation>
+      </example>
+    </feature>
+  </category>
+
+  <category id="data_import">
+    <name>Data Import</name>
+    <description>Features for importing and querying external data.</description>
+    
+    <feature id="direct_file_query">
+      <name>Direct Querying of Files</name>
+      <syntax>SELECT * FROM 'filename.ext'</syntax>
+      <description>Allows querying files directly without importing data first.</description>
+      <example>
+        <sql>SELECT * FROM 'my_data.csv';</sql>
+        <explanation>Directly queries a CSV file without loading it into a table first.</explanation>
+      </example>
+      <example>
+        <sql>SELECT * FROM 'my_data.parquet';</sql>
+        <explanation>Directly queries a Parquet file without loading it into a table first.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="filename_glob">
+      <name>Filename Expansion</name>
+      <syntax>SELECT * FROM 'pattern*.ext'</syntax>
+      <description>Supports glob patterns to query multiple files at once.</description>
+      <example>
+        <sql>SELECT * FROM 'my-data/part-*.parquet';</sql>
+        <explanation>Queries all Parquet files matching the pattern 'part-*.parquet' in the 'my-data' directory.</explanation>
+      </example>
+    </feature>
+    
+    <feature id="auto_schema_detection">
+      <name>Auto-detecting Headers and Schema</name>
+      <description>Automatically detects CSV headers and infers schema from file contents.</description>
+      <example>
+        <sql>SELECT * FROM 'data.csv';</sql>
+        <explanation>Automatically detects headers and column types when querying a CSV file directly.</explanation>
+      </example>
+    </feature>
+  </category>
+</duckdb_friendly_sql>

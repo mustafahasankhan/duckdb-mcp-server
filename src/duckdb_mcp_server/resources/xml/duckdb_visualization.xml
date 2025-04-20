@@ -1,0 +1,143 @@
+<duckdb_visualization>
+  <metadata>
+    <title>DuckDB Data Visualization Guidelines</title>
+    <description>Guidelines and best practices for visualizing data from DuckDB queries</description>
+  </metadata>
+
+  <visualization_types>
+    <type id="time_series">
+      <name>Time Series Charts</name>
+      <description>Line charts showing data points over time, ideal for temporal trends.</description>
+      <suitable_for>
+        <data_type>Numeric values with timestamp/date columns</data_type>
+        <analysis>Trends, patterns, seasonality, anomalies over time</analysis>
+      </suitable_for>
+      <query_pattern>
+        <code>
+            SELECT 
+                time_column::DATE as date,
+                AVG(metric_column) as avg_value
+            FROM 
+                'data_source'
+            WHERE 
+                time_column BETWEEN start_date AND end_date
+            GROUP BY 
+                date
+            ORDER BY 
+                date
+        </code>
+      </query_pattern>
+      <best_practices>
+        <practice>Consider appropriate time granularity (hour, day, month)</practice>
+        <practice>Use date_trunc() for time bucketing</practice>
+        <practice>Filter for relevant time periods</practice>
+      </best_practices>
+    </type>
+    
+    <type id="bar_chart">
+      <name>Bar Charts</name>
+      <description>Visual comparison of categorical data using rectangular bars.</description>
+      <suitable_for>
+        <data_type>Categorical columns with associated numeric values</data_type>
+        <analysis>Comparisons, rankings, distributions by category</analysis>
+      </suitable_for>
+      <query_pattern>
+        <code>
+            SELECT 
+                category_column,
+                SUM(metric_column) as total_value
+            FROM 
+                'data_source'
+            GROUP BY 
+                category_column
+            ORDER BY 
+                total_value DESC
+            LIMIT 10
+        </code>
+      </query_pattern>
+      <best_practices>
+        <practice>Limit to top N categories to avoid cluttered visuals</practice>
+        <practice>Consider horizontal bars for long category names</practice>
+        <practice>Use appropriate aggregation (SUM, AVG, COUNT)</practice>
+      </best_practices>
+    </type>
+    
+    <type id="scatter_plot">
+      <name>Scatter Plots</name>
+      <description>Shows the relationship between two numeric variables.</description>
+      <suitable_for>
+        <data_type>Two or more numeric columns</data_type>
+        <analysis>Correlations, patterns, clusters, outliers</analysis>
+      </suitable_for>
+      <query_pattern>
+        <code>
+            SELECT 
+                numeric_column1,
+                numeric_column2,
+                optional_category_column
+            FROM 
+                'data_source'
+            WHERE 
+                numeric_column1 IS NOT NULL AND
+                numeric_column2 IS NOT NULL
+            LIMIT 1000
+        </code>
+      </query_pattern>
+      <best_practices>
+        <practice>Include color dimension for additional insights</practice>
+        <practice>Consider adding trend lines</practice>
+        <practice>Limit point count for performance</practice>
+      </best_practices>
+    </type>
+    
+    <type id="heatmap">
+      <name>Heatmaps</name>
+      <description>Color-coded matrix representation of data values.</description>
+      <suitable_for>
+        <data_type>Two categorical dimensions with a numeric measure</data_type>
+        <analysis>Patterns, concentrations, variations across categories</analysis>
+      </suitable_for>
+      <query_pattern>
+        <code>
+            SELECT 
+                category1,
+                category2,
+                COUNT(*) as frequency
+            FROM 
+                'data_source'
+            GROUP BY 
+                category1, category2
+            ORDER BY
+                category1, category2
+        </code>
+      </query_pattern>
+      <best_practices>
+        <practice>Use appropriate color scale</practice>
+        <practice>Consider log scale for skewed data</practice>
+        <practice>Sort axes meaningfully</practice>
+      </best_practices>
+    </type>
+  </visualization_types>
+
+  <advanced_techniques>
+    <technique id="combining_visualizations">
+      <name>Dashboard Composition</name>
+      <description>Combining multiple visualization types for comprehensive insights.</description>
+      <example>
+        <steps>
+          <step>Time series of overall metrics</step>
+          <step>Bar chart of top categories</step>
+          <step>Heatmap showing detailed breakdown</step>
+        </steps>
+      </example>
+    </technique>
+    
+    <technique id="interactive_filtering">
+      <name>Interactive Filtering</name>
+      <description>Enabling exploration through dynamic query modification.</description>
+      <implementation>
+        <approach>Generate parameterized queries that can be modified by user input</approach>
+      </implementation>
+    </technique>
+  </advanced_techniques>
+</duckdb_visualization>
