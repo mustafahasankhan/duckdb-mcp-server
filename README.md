@@ -42,7 +42,7 @@ pip install duckdb-mcp-server
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/duckdb-mcp-server.git
+git clone https://github.com/mustafahasankhan/duckdb-mcp-server.git
 cd duckdb-mcp-server
 pip install -e .
 ```
