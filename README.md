@@ -5,6 +5,10 @@
 
 A Model Context Protocol (MCP) server implementation that enables AI assistants like Claude to interact with DuckDB for powerful data analysis capabilities.
 
+<a href="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server/badge" alt="DuckDB Server MCP server" />
+</a>
+
 ## 🌟 What is DuckDB MCP Server?
 
 DuckDB MCP Server connects AI assistants to [DuckDB](https://duckdb.org/) - a high-performance analytical database - through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows AI models to:
