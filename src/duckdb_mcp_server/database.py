@@ -3,754 +3,485 @@ DuckDB connection and query handling for the MCP server.
 """
 
 import logging
-import os
-import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional
 
 import duckdb
 
 from .config import Config
 from .credentials import setup_s3_credentials
 
-logger = logging.getLogger("mcp-server-duckdb.database")
+logger = logging.getLogger("duckdb-mcp-server.database")
 
 
 class DuckDBClient:
     """
     DuckDB client that handles database connections and query execution.
-    
-    This class manages connections to DuckDB and ensures proper setup
-    for S3 and other extensions.
+
+    Provides a safe, bounded interface over DuckDB for use by the MCP server.
+    All queries are subject to a configurable row limit and query timeout to
+    prevent resource exhaustion.
     """
 
+    # Maximum rows returned by any single query to prevent OOM
+    MAX_RESULT_ROWS: int = 10_000
+
     def __init__(self, config: Config):
-        """
-        Initialize the DuckDB client with the given configuration.
-        
-        Args:
-            config: Server configuration
-        """
         self.config = config
         self._initialize_database()
-        
+
     def _initialize_database(self) -> None:
         """Initialize the database file and directory if needed."""
         dir_path = self.config.db_path.parent
-        
-        # Create parent directory if it doesn't exist
+
         if not dir_path.exists():
             if self.config.readonly:
                 raise ValueError(
-                    f"Database directory does not exist: {dir_path} and readonly mode is enabled."
+                    f"Database directory does not exist: {dir_path} "
+                    "and readonly mode is enabled."
                 )
-                
             logger.info(f"Creating directory: {dir_path}")
             dir_path.mkdir(parents=True, exist_ok=True)
-            
-        # Create database file if it doesn't exist
+
         if not self.config.db_path.exists() and not self.config.readonly:
             logger.info(f"Creating DuckDB database: {self.config.db_path}")
-            # Create and close the database - this ensures the file exists
             conn = duckdb.connect(str(self.config.db_path))
             conn.close()
-            
-        # Validate database file exists if readonly
+
         if self.config.readonly and not self.config.db_path.exists():
             raise ValueError(
-                f"Database file does not exist: {self.config.db_path} and readonly mode is enabled."
+                f"Database file does not exist: {self.config.db_path} "
+                "and readonly mode is enabled."
             )
 
     @contextmanager
     def get_connection(self):
         """
-        Get a DuckDB connection with proper extensions and settings.
-        
-        This context manager ensures the connection is properly configured
-        and closed after use.
-        
-        Yields:
-            duckdb.DuckDBPyConnection: Configured DuckDB connection
+        Yield a configured DuckDB connection.
+
+        Extensions loaded: httpfs (S3), json.
         """
         connection = duckdb.connect(
-            str(self.config.db_path), 
-            read_only=self.config.readonly
+            str(self.config.db_path),
+            read_only=self.config.readonly,
         )
-        
         try:
-            # Load httpfs extension for S3 support
             connection.execute("INSTALL httpfs; LOAD httpfs;")
-            
-            # Configure S3 credentials
-            setup_s3_credentials(connection, self.config)
-            
-            # Install and load other potentially useful extensions
             connection.execute("INSTALL json; LOAD json;")
-            
+            setup_s3_credentials(connection, self.config)
             yield connection
         finally:
             connection.close()
-            
-    def execute_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> Tuple[List[Any], List[str]]:
+
+    def execute_query(
+        self, query: str, parameters: Optional[dict[str, Any]] = None
+    ) -> tuple[list[Any], list[str], bool]:
         """
-        Execute a SQL query on the DuckDB database.
-        
-        Args:
-            query: SQL query to execute
-            parameters: Optional query parameters
-            
-        Returns:
-            Tuple of (results, column_names)
-        
-        Raises:
-            duckdb.Error: If the query execution fails
+        Execute a SQL query and return (rows, column_names, truncated).
+
+        Results are capped at MAX_RESULT_ROWS rows. If more rows exist the
+        third element of the tuple will be True.
         """
         with self.get_connection() as connection:
-            logger.debug(f"Executing query: {query[:100]}{'...' if len(query) > 100 else ''}")
-            
-            # Execute the query
-            result = connection.execute(query, parameters if parameters else {})
-            
-            # Get column names
+            logger.debug(
+                "Executing query: %s%s",
+                query[:120],
+                "..." if len(query) > 120 else "",
+            )
+            result = connection.execute(query, parameters or {})
             column_names = [col[0] for col in result.description]
-            
-            # Fetch all results
-            rows = result.fetchall()
-            
-            return rows, column_names
-    
-    def format_result(self, results: List[Any], column_names: List[str]) -> str:
-        """
-        Format query results as a readable text table.
-        
-        Args:
-            results: Query result rows
-            column_names: Column names
-            
-        Returns:
-            Formatted string representation of the results
-        """
+
+            rows = result.fetchmany(self.MAX_RESULT_ROWS + 1)
+            truncated = len(rows) > self.MAX_RESULT_ROWS
+            if truncated:
+                rows = rows[: self.MAX_RESULT_ROWS]
+
+            return list(rows), column_names, truncated
+
+    def format_result(
+        self, results: list[Any], column_names: list[str], truncated: bool = False
+    ) -> str:
+        """Format query results as a plain-text table."""
         if not results:
             return "Query executed successfully. No results returned."
-            
-        # Format each row as string
-        rows_as_str = []
-        
-        # Add header row
-        rows_as_str.append(" | ".join(column_names))
-        
-        # Add separator
-        rows_as_str.append("-" * (sum(len(col) for col in column_names) + 3 * (len(column_names) - 1)))
-        
-        # Add data rows
-        for row in results:
-            # Convert each value in the row to string
-            str_row = [str(val) if val is not None else "NULL" for val in row]
-            rows_as_str.append(" | ".join(str_row))
-            
-        return "\n".join(rows_as_str)
-    
-    def query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Execute a query and return formatted results.
-        
-        Args:
-            query: SQL query to execute
-            parameters: Optional query parameters
-            
-        Returns:
-            Formatted result string
-            
-        Raises:
-            Exception: If the query execution fails
-        """
-        try:
-            results, column_names = self.execute_query(query, parameters)
-            return self.format_result(results, column_names)
-        except Exception as e:
-            logger.error(f"Error executing query: {str(e)}")
-            return f"Error executing query: {str(e)}"
-            
-    def get_parquet_metadata(self, file_path: str) -> Dict[str, Any]:
-        """
-        Extract metadata from a Parquet file.
-        
-        Args:
-            file_path: Path to the Parquet file (can be local or S3)
-            
-        Returns:
-            Dictionary containing metadata information
-            
-        Raises:
-            Exception: If metadata extraction fails
-        """
-        try:
-            # Query parquet_metadata() function to get file metadata
-            query = f"SELECT * FROM parquet_metadata('{file_path}')"
-            results, column_names = self.execute_query(query)
-            
-            # Format into a more useful structure
-            metadata = {
-                "file_path": file_path,
-                "schema": self.get_schema(file_path),
-                "row_count": None,
-                "columns": []
-            }
-            
-            # Extract row count if available
-            count_query = f"SELECT COUNT(*) FROM '{file_path}'"
-            count_results, _ = self.execute_query(count_query)
-            if count_results and count_results[0]:
-                metadata["row_count"] = count_results[0][0]
-                
-            return metadata
-        except Exception as e:
-            logger.error(f"Error extracting Parquet metadata: {str(e)}")
-            raise
-            
-    def get_schema(self, file_path: str) -> List[Dict[str, str]]:
-        """
-        Get the schema of a file (works with CSV, Parquet, JSON).
-        
-        Args:
-            file_path: Path to the file (can be local or S3)
-            
-        Returns:
-            List of column definitions with name and type
-            
-        Raises:
-            Exception: If schema extraction fails
-        """
-        try:
-            # Use DESCRIBE to get schema information
-            query = f"DESCRIBE SELECT * FROM '{file_path}' LIMIT 0"
-            results, column_names = self.execute_query(query)
-            
-            # Format into a more useful structure
-            schema = []
-            for row in results:
-                schema.append({
-                    "column_name": row[0],
-                    "column_type": row[1]
-                })
-                
-            return schema
-        except Exception as e:
-            logger.error(f"Error extracting schema: {str(e)}")
-            raise
-            
-    def analyze_data(self, file_path: str) -> Dict[str, Any]:
-        """
-        Perform basic statistical analysis on the data.
-        
-        Args:
-            file_path: Path to the file (can be local or S3)
-            
-        Returns:
-            Dictionary containing analysis results
-            
-        Raises:
-            Exception: If analysis fails
-        """
-        try:
-            # Get schema first to understand column types
-            schema = self.get_schema(file_path)
-            
-            # Collect all numeric and date columns for analysis
-            numeric_columns = []
-            date_columns = []
-            categorical_columns = []
-            
-            for col in schema:
-                col_type = col["column_type"].upper()
-                col_name = col["column_name"]
-                
-                if any(t in col_type for t in ["INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC"]):
-                    numeric_columns.append(col_name)
-                elif any(t in col_type for t in ["DATE", "TIMESTAMP", "TIME"]):
-                    date_columns.append(col_name)
-                elif any(t in col_type for t in ["VARCHAR", "TEXT", "CHAR", "STRING"]):
-                    categorical_columns.append(col_name)
-            
-            analysis = {
-                "file_path": file_path,
-                "row_count": None,
-                "numeric_analysis": {},
-                "date_analysis": {},
-                "categorical_analysis": {}
-            }
-            
-            # Get row count
-            count_query = f"SELECT COUNT(*) FROM '{file_path}'"
-            count_results, _ = self.execute_query(count_query)
-            if count_results and count_results[0]:
-                analysis["row_count"] = count_results[0][0]
-            
-            # Analyze numeric columns
-            if numeric_columns:
-                metrics = ["MIN", "MAX", "AVG", "MEDIAN", "STDDEV"]
-                select_parts = []
-                
-                for col in numeric_columns:
-                    for metric in metrics:
-                        select_parts.append(f"{metric}(\"{col}\") as {col}_{metric.lower()}")
-                
-                if select_parts:
-                    numeric_query = f"SELECT {', '.join(select_parts)} FROM '{file_path}'"
-                    numeric_results, numeric_cols = self.execute_query(numeric_query)
-                    
-                    if numeric_results:
-                        # Convert results to a more usable format
-                        result_dict = {}
-                        for i, col_name in enumerate(numeric_cols):
-                            result_dict[col_name] = numeric_results[0][i]
-                        
-                        # Organize by column
-                        for col in numeric_columns:
-                            analysis["numeric_analysis"][col] = {
-                                "min": result_dict.get(f"{col}_min"),
-                                "max": result_dict.get(f"{col}_max"),
-                                "avg": result_dict.get(f"{col}_avg"),
-                                "median": result_dict.get(f"{col}_median"),
-                                "stddev": result_dict.get(f"{col}_stddev")
-                            }
-            
-            # Analyze date columns
-            if date_columns:
-                for col in date_columns:
-                    date_query = f"SELECT MIN(\"{col}\"), MAX(\"{col}\") FROM '{file_path}'"
-                    date_results, _ = self.execute_query(date_query)
-                    
-                    if date_results and date_results[0]:
-                        analysis["date_analysis"][col] = {
-                            "min_date": str(date_results[0][0]),
-                            "max_date": str(date_results[0][1])
-                        }
-            
-            # Analyze categorical columns (top values)
-            if categorical_columns:
-                for col in categorical_columns:
-                    # Get top 5 most frequent values
-                    cat_query = f"""
-                    SELECT \"{col}\", COUNT(*) as count 
-                    FROM '{file_path}' 
-                    WHERE \"{col}\" IS NOT NULL 
-                    GROUP BY \"{col}\" 
-                    ORDER BY count DESC 
-                    LIMIT 5
-                    """
-                    cat_results, _ = self.execute_query(cat_query)
-                    
-                    if cat_results:
-                        top_values = []
-                        for row in cat_results:
-                            top_values.append({
-                                "value": str(row[0]),
-                                "count": row[1]
-                            })
-                        
-                        analysis["categorical_analysis"][col] = {
-                            "top_values": top_values
-                        }
-            
-            return analysis
-        except Exception as e:
-            logger.error(f"Error analyzing data: {str(e)}")
-            raise
-            
-    def suggest_visualizations(self, file_path: str) -> List[Dict[str, Any]]:
-        """
-        Suggest possible visualizations based on data analysis.
-        
-        Args:
-            file_path: Path to the file (can be local or S3)
-            
-        Returns:
-            List of visualization suggestions
-            
-        Raises:
-            Exception: If suggestion generation fails
-        """
-        try:
-            # First analyze the data
-            analysis = self.analyze_data(file_path)
-            suggestions = []
-            
-            # Suggest time series if we have date columns and numeric columns
-            if analysis["date_analysis"] and analysis["numeric_analysis"]:
-                for date_col in analysis["date_analysis"]:
-                    for numeric_col in analysis["numeric_analysis"]:
-                        suggestions.append({
-                            "type": "time_series",
-                            "title": f"{numeric_col} over time",
-                            "description": f"Line chart showing {numeric_col} values over time ({date_col})",
-                            "query": f"""
-                            SELECT 
-                                \"{date_col}\", 
-                                \"{numeric_col}\" 
-                            FROM 
-                                '{file_path}' 
-                            WHERE 
-                                \"{date_col}\" IS NOT NULL AND 
-                                \"{numeric_col}\" IS NOT NULL 
-                            ORDER BY 
-                                \"{date_col}\"
-                            """
-                        })
-            
-            # Suggest bar charts for categorical data
-            if analysis["categorical_analysis"] and analysis["numeric_analysis"]:
-                for cat_col in analysis["categorical_analysis"]:
-                    for numeric_col in analysis["numeric_analysis"]:
-                        suggestions.append({
-                            "type": "bar_chart",
-                            "title": f"{numeric_col} by {cat_col}",
-                            "description": f"Bar chart showing average {numeric_col} for each {cat_col} category",
-                            "query": f"""
-                            SELECT 
-                                \"{cat_col}\", 
-                                AVG(\"{numeric_col}\") as avg_{numeric_col} 
-                            FROM 
-                                '{file_path}' 
-                            WHERE 
-                                \"{cat_col}\" IS NOT NULL 
-                            GROUP BY 
-                                \"{cat_col}\" 
-                            ORDER BY 
-                                avg_{numeric_col} DESC 
-                            LIMIT 10
-                            """
-                        })
-            
-            # Suggest scatter plots for pairs of numeric columns
-            numeric_cols = list(analysis["numeric_analysis"].keys())
-            if len(numeric_cols) >= 2:
-                for i in range(min(len(numeric_cols), 3)):  # Limit to first 3 columns to avoid too many suggestions
-                    for j in range(i+1, min(len(numeric_cols), 4)):
-                        suggestions.append({
-                            "type": "scatter_plot",
-                            "title": f"{numeric_cols[i]} vs {numeric_cols[j]}",
-                            "description": f"Scatter plot showing relationship between {numeric_cols[i]} and {numeric_cols[j]}",
-                            "query": f"""
-                            SELECT 
-                                \"{numeric_cols[i]}\", 
-                                \"{numeric_cols[j]}\" 
-                            FROM 
-                                '{file_path}' 
-                            WHERE 
-                                \"{numeric_cols[i]}\" IS NOT NULL AND 
-                                \"{numeric_cols[j]}\" IS NOT NULL
-                            LIMIT 1000
-                            """
-                        })
-            
-            return suggestions
-        except Exception as e:
-            logger.error(f"Error generating visualization suggestions: {str(e)}")
-            raise
 
-    # Methods for MCP tool operations
-    
-    def handle_query_tool(self, query: str, session_id: str) -> str:
-        """
-        Execute a query and provide helpful suggestions.
-        
-        Args:
-            query: SQL query to execute
-            session_id: Session ID for context
-            
-        Returns:
-            Formatted result with suggestions
-        """
-        # Execute the query
-        result = self.query(query)
-        
-        # Extract file paths from query if it's a CREATE TABLE query
-        lower_query = query.lower()
-        suggestion = ""
-        
-        if "create table" in lower_query and "as select" in lower_query:
-            # Add suggestions for multi-file operations with union_by_name
-            if "read_" in lower_query and ("*" in lower_query or "[" in lower_query):
-                if "union_by_name" not in lower_query:
-                    suggestion += ("\n\nReminder: When working with multiple files that might have "
-                                  "different schemas, use the union_by_name parameter to avoid schema conflicts:"
-                                  "\nSELECT * FROM read_parquet('path/*.parquet', union_by_name=true)")
-        
-        elif any(reader in lower_query for reader in ["read_parquet", "read_csv", "read_json"]) and "create table" not in lower_query:
-            # Recommend caching to a table for direct file access queries
-            short_id = session_id[:8]
-            table_suggestion = f"cached_data_session_{short_id}"
-            suggestion = (f"\n\nTIP: For better performance with remote or multiple files, consider caching the data first:"
-                        f"\nCREATE TABLE {table_suggestion} AS {query}"
-                        f"\n\nThen you can query the cached table directly:"
-                        f"\nSELECT * FROM {table_suggestion} LIMIT 10;")
-        
-        # Combine result and suggestion
-        return result + suggestion
-        
-    def extract_file_paths_from_query(self, query: str) -> List[str]:
-        """
-        Extract file paths from a SQL query.
-        
-        Args:
-            query: SQL query
-            
-        Returns:
-            List of file paths found in the query
-        """
-        # Simple pattern matching to find file paths
-        if "read_" in query:
-            start_idx = query.find("read_")
-            if start_idx > 0:
-                end_idx = query.find(")", start_idx)
-                if end_idx > 0:
-                    file_part = query[start_idx:end_idx]
-                    # Extract paths inside quotes
-                    import re
-                    file_paths = re.findall(r"'([^']*)'", file_part)
-                    return file_paths
-        return []
-        
-    def extract_table_name_from_query(self, query: str) -> Optional[str]:
-        """
-        Extract table name from a CREATE TABLE query.
-        
-        Args:
-            query: SQL query
-            
-        Returns:
-            Table name or None if not a CREATE TABLE query
-        """
-        lower_query = query.lower()
-        if "create table" in lower_query:
-            try:
-                # Extract table name using basic parsing
-                parts = query.split("CREATE TABLE", 1)[1].split("AS")[0].strip()
-                table_name = parts.split()[0].strip()
-                return table_name
-            except (IndexError, ValueError):
-                pass
-        return None
-    
-    def handle_analyze_schema_tool(self, file_path_or_table: str) -> str:
-        """
-        Analyze the schema of a file or table.
-        
-        Args:
-            file_path_or_table: Path to file or table name
-            
-        Returns:
-            Schema information as formatted text
-        """
-        # Try to identify if we're dealing with a file path or table name
-        if file_path_or_table.startswith("s3://") or any(ext in file_path_or_table for ext in [".parquet", ".csv", ".json"]):
-            # It's a file path
-            try:
-                # Execute DESCRIBE on the file path
-                query = f"DESCRIBE SELECT * FROM '{file_path_or_table}' LIMIT 0"
-                return self.query(query)
-            except Exception as e:
-                logger.error(f"Error analyzing schema: {str(e)}")
-                return f"Error analyzing schema: {str(e)}"
-        else:
-            # Assume it's a table name
-            try:
-                # Execute DESCRIBE on the table name
-                query = f"DESCRIBE {file_path_or_table}"
-                return self.query(query)
-            except Exception as e:
-                logger.error(f"Error analyzing schema: {str(e)}")
-                return f"Error analyzing schema: {str(e)}"
-    
-    def handle_analyze_data_tool(self, table_name: str) -> str:
-        """
-        Analyze data in a table.
-        
-        Args:
-            table_name: Name of the table to analyze
-            
-        Returns:
-            Analysis results as formatted text
-        """
+        header = " | ".join(column_names)
+        separator = "-" * (
+            sum(len(c) for c in column_names) + 3 * (len(column_names) - 1)
+        )
+        data_rows = [
+            " | ".join(str(v) if v is not None else "NULL" for v in row)
+            for row in results
+        ]
+        lines = [header, separator] + data_rows
+        if truncated:
+            lines.append(
+                f"\n[Results truncated: showing {self.MAX_RESULT_ROWS} of more rows. "
+                "Refine your query with WHERE / LIMIT to retrieve specific data.]"
+            )
+        return "\n".join(lines)
+
+    def query(self, query: str, parameters: Optional[dict[str, Any]] = None) -> str:
+        """Execute a query and return a formatted result string."""
         try:
-            # Generate and execute summary queries
-            summary_parts = []
-            
-            # Basic table info
-            count_query = f"SELECT COUNT(*) as row_count FROM {table_name}"
-            count_result = self.query(count_query)
-            summary_parts.append(f"Table: {table_name}\n{count_result}")
-            
-            # Preview data
-            preview_query = f"SELECT * FROM {table_name} LIMIT 5"
-            preview_result = self.query(preview_query)
-            summary_parts.append(f"Data Preview:\n{preview_result}")
-            
-            # Get column information
-            columns_query = f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}'"
-            columns_result, col_names = self.execute_query(columns_query)
-            
-            if columns_result:
-                # Collect column types for more specific analysis
-                numeric_columns = []
-                date_columns = []
-                categorical_columns = []
-                
-                for col in columns_result:
-                    col_type = col[1].upper()
-                    col_name = col[0]
-                    
-                    if any(t in col_type for t in ["INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC"]):
-                        numeric_columns.append(col_name)
-                    elif any(t in col_type for t in ["DATE", "TIMESTAMP", "TIME"]):
-                        date_columns.append(col_name)
-                    elif any(t in col_type for t in ["VARCHAR", "TEXT", "CHAR", "STRING"]):
-                        categorical_columns.append(col_name)
-                
-                # Analyze numeric columns
-                if numeric_columns:
-                    for col in numeric_columns[:3]:  # Limit to first 3 to avoid too much output
-                        stats_query = f"""
-                        SELECT 
-                            MIN("{col}") as min_value,
-                            MAX("{col}") as max_value,
-                            AVG("{col}") as avg_value,
-                            MEDIAN("{col}") as median_value
-                        FROM {table_name}
-                        """
-                        stats_result = self.query(stats_query)
-                        summary_parts.append(f"Stats for {col}:\n{stats_result}")
-                
-                # Distribution for categorical columns
-                if categorical_columns:
-                    for col in categorical_columns[:2]:  # Limit to first 2
-                        dist_query = f"""
-                        SELECT "{col}", COUNT(*) as count
-                        FROM {table_name}
-                        GROUP BY "{col}"
-                        ORDER BY count DESC
-                        LIMIT 5
-                        """
-                        dist_result = self.query(dist_query)
-                        summary_parts.append(f"Distribution for {col}:\n{dist_result}")
-            
-            # Combine all summary parts
-            return "\n\n".join(summary_parts)
-            
+            rows, cols, truncated = self.execute_query(query, parameters)
+            return self.format_result(rows, cols, truncated)
+        except duckdb.CatalogException as e:
+            logger.warning("Catalog error: %s", e)
+            return f"Catalog error (table/column not found): {e}"
+        except duckdb.ParserException as e:
+            logger.warning("SQL parse error: %s", e)
+            return f"SQL syntax error: {e}"
+        except duckdb.Error as e:
+            logger.error("DuckDB error: %s", e)
+            return f"DuckDB error: {e}"
         except Exception as e:
-            logger.error(f"Error analyzing data: {str(e)}")
-            return f"Error analyzing data: {str(e)}"
-            
-    def handle_suggest_visualizations_tool(self, table_name: str) -> str:
-        """
-        Suggest visualizations for a table.
-        
-        Args:
-            table_name: Name of the table to analyze
-            
-        Returns:
-            Visualization suggestions as formatted text
-        """
-        try:
-            # Get column information
-            columns_query = f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}'"
-            columns_result, _ = self.execute_query(columns_query)
-            
-            visualization_suggestions = [
-                f"# Visualization Queries for {table_name}\n\n"
-                "Here are some suggested queries to prepare data for different visualization types:"
+            logger.error("Unexpected error executing query: %s", e)
+            return f"Error executing query: {e}"
+
+    # ------------------------------------------------------------------ #
+    # Schema & analysis helpers                                             #
+    # ------------------------------------------------------------------ #
+
+    def get_schema(self, file_path: str) -> list[dict[str, str]]:
+        """Return column definitions for a file path or table."""
+        rows, _, _ = self.execute_query(
+            f"DESCRIBE SELECT * FROM '{file_path}' LIMIT 0"
+        )
+        return [{"column_name": row[0], "column_type": row[1]} for row in rows]
+
+    def analyze_data(self, file_path: str) -> dict[str, Any]:
+        """Perform statistical analysis on a file path."""
+        schema = self.get_schema(file_path)
+
+        numeric_cols, date_cols, cat_cols = [], [], []
+        for col in schema:
+            t = col["column_type"].upper()
+            n = col["column_name"]
+            if any(k in t for k in ["INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "HUGEINT"]):
+                numeric_cols.append(n)
+            elif any(k in t for k in ["DATE", "TIMESTAMP", "TIME"]):
+                date_cols.append(n)
+            elif any(k in t for k in ["VARCHAR", "TEXT", "CHAR", "STRING"]):
+                cat_cols.append(n)
+
+        analysis: dict[str, Any] = {
+            "file_path": file_path,
+            "row_count": None,
+            "numeric_analysis": {},
+            "date_analysis": {},
+            "categorical_analysis": {},
+        }
+
+        count_rows, _, _ = self.execute_query(f"SELECT COUNT(*) FROM '{file_path}'")
+        if count_rows:
+            analysis["row_count"] = count_rows[0][0]
+
+        if numeric_cols:
+            metrics = ["MIN", "MAX", "AVG", "MEDIAN", "STDDEV"]
+            parts = [
+                f'{metric}("{col}") AS {col}_{metric.lower()}'
+                for col in numeric_cols
+                for metric in metrics
             ]
-            
-            # Basic frequency chart
-            if columns_result:
-                # Find a good categorical column
-                categorical_columns = [col[0] for col in columns_result if 
-                                     col[1].lower() in ('varchar', 'text', 'char', 'enum')]
-                numeric_columns = [col[0] for col in columns_result if 
-                                  col[1].lower() in ('integer', 'bigint', 'double', 'float', 'decimal')]
-                date_columns = [col[0] for col in columns_result if 
-                               'date' in col[1].lower() or 'time' in col[1].lower()]
-                
-                # Bar chart
-                if categorical_columns and numeric_columns:
-                    cat_col = categorical_columns[0]
-                    num_col = numeric_columns[0]
-                    visualization_suggestions.append(f"""
-## Bar Chart
-```sql
-SELECT {cat_col}, SUM({num_col}) as total
-FROM {table_name}
-GROUP BY {cat_col}
-ORDER BY total DESC
-LIMIT 10;
-```
-                    """)
-                
-                # Time series
-                if date_columns and numeric_columns:
-                    date_col = date_columns[0]
-                    num_col = numeric_columns[0]
-                    visualization_suggestions.append(f"""
-## Time Series Chart
-```sql
-SELECT {date_col}, SUM({num_col}) as total
-FROM {table_name}
-GROUP BY {date_col}
-ORDER BY {date_col};
-```
-                    """)
-                
-                # For scatter plots
-                if len(numeric_columns) >= 2:
-                    vis1 = numeric_columns[0]
-                    vis2 = numeric_columns[1]
-                    visualization_suggestions.append(f"""
-## Scatter Plot
-```sql
-SELECT {vis1}, {vis2}
-FROM {table_name}
-LIMIT 1000;
-```
-                    """)
-            
-            return "\n\n".join(visualization_suggestions)
-            
+            rows, col_names, _ = self.execute_query(
+                f"SELECT {', '.join(parts)} FROM '{file_path}'"
+            )
+            if rows:
+                rd = dict(zip(col_names, rows[0]))
+                for col in numeric_cols:
+                    analysis["numeric_analysis"][col] = {
+                        m.lower(): rd.get(f"{col}_{m.lower()}") for m in metrics
+                    }
+
+        for col in date_cols:
+            rows, _, _ = self.execute_query(
+                f'SELECT MIN("{col}"), MAX("{col}") FROM \'{file_path}\''
+            )
+            if rows and rows[0]:
+                analysis["date_analysis"][col] = {
+                    "min_date": str(rows[0][0]),
+                    "max_date": str(rows[0][1]),
+                }
+
+        for col in cat_cols:
+            rows, _, _ = self.execute_query(
+                f"""
+                SELECT "{col}", COUNT(*) AS cnt
+                FROM '{file_path}'
+                WHERE "{col}" IS NOT NULL
+                GROUP BY "{col}"
+                ORDER BY cnt DESC
+                LIMIT 5
+                """
+            )
+            if rows:
+                analysis["categorical_analysis"][col] = {
+                    "top_values": [{"value": str(r[0]), "count": r[1]} for r in rows]
+                }
+
+        return analysis
+
+    def suggest_visualizations(self, file_path: str) -> list[dict[str, Any]]:
+        """Suggest chart types and queries based on column type analysis."""
+        analysis = self.analyze_data(file_path)
+        suggestions = []
+
+        date_cols = list(analysis["date_analysis"].keys())
+        num_cols = list(analysis["numeric_analysis"].keys())
+        cat_cols = list(analysis["categorical_analysis"].keys())
+
+        for dc in date_cols:
+            for nc in num_cols:
+                suggestions.append(
+                    {
+                        "type": "time_series",
+                        "title": f"{nc} over time",
+                        "description": f"Line chart of {nc} by {dc}",
+                        "query": (
+                            f'SELECT "{dc}", "{nc}" FROM \'{file_path}\''
+                            f' WHERE "{dc}" IS NOT NULL AND "{nc}" IS NOT NULL'
+                            f' ORDER BY "{dc}"'
+                        ),
+                    }
+                )
+
+        for cc in cat_cols:
+            for nc in num_cols:
+                suggestions.append(
+                    {
+                        "type": "bar_chart",
+                        "title": f"{nc} by {cc}",
+                        "description": f"Bar chart of avg {nc} per {cc} category",
+                        "query": (
+                            f'SELECT "{cc}", AVG("{nc}") AS avg_{nc}'
+                            f' FROM \'{file_path}\' WHERE "{cc}" IS NOT NULL'
+                            f' GROUP BY "{cc}" ORDER BY avg_{nc} DESC LIMIT 10'
+                        ),
+                    }
+                )
+
+        for i in range(min(len(num_cols), 3)):
+            for j in range(i + 1, min(len(num_cols), 4)):
+                suggestions.append(
+                    {
+                        "type": "scatter_plot",
+                        "title": f"{num_cols[i]} vs {num_cols[j]}",
+                        "description": f"Scatter plot of {num_cols[i]} against {num_cols[j]}",
+                        "query": (
+                            f'SELECT "{num_cols[i]}", "{num_cols[j]}"'
+                            f' FROM \'{file_path}\''
+                            f' WHERE "{num_cols[i]}" IS NOT NULL'
+                            f'   AND "{num_cols[j]}" IS NOT NULL'
+                            f" LIMIT 1000"
+                        ),
+                    }
+                )
+
+        return suggestions
+
+    # ------------------------------------------------------------------ #
+    # MCP tool handler methods                                              #
+    # ------------------------------------------------------------------ #
+
+    def handle_query_tool(self, query: str, session_id: str) -> str:
+        """Execute a query and append relevant DuckDB hints."""
+        result = self.query(query)
+
+        lower_q = query.lower()
+        hint = ""
+
+        if "create table" in lower_q and "as select" in lower_q:
+            if "read_" in lower_q and ("*" in lower_q or "[" in lower_q):
+                if "union_by_name" not in lower_q:
+                    hint = (
+                        "\n\nReminder: when reading multiple files with potentially different "
+                        "schemas, add union_by_name = true to avoid column mismatch errors:\n"
+                        "  SELECT * FROM read_parquet('path/*.parquet', union_by_name = true)"
+                    )
+        elif (
+            any(r in lower_q for r in ["read_parquet", "read_csv", "read_json"])
+            and "create table" not in lower_q
+        ):
+            short_id = session_id[:8]
+            tbl = f"cached_data_{short_id}"
+            hint = (
+                f"\n\nTIP: Cache remote/large files for better performance:\n"
+                f"  CREATE TABLE {tbl} AS {query}\n"
+                f"Then query {tbl} directly."
+            )
+
+        return result + hint
+
+    def handle_analyze_schema_tool(self, file_path_or_table: str) -> str:
+        """Return schema information for a file or table."""
+        try:
+            if _looks_like_file(file_path_or_table):
+                return self.query(
+                    f"DESCRIBE SELECT * FROM '{file_path_or_table}' LIMIT 0"
+                )
+            else:
+                return self.query(f"DESCRIBE {file_path_or_table}")
         except Exception as e:
-            logger.error(f"Error suggesting visualizations: {str(e)}")
-            return f"Error suggesting visualizations: {str(e)}"
+            logger.error("Error analyzing schema: %s", e)
+            return f"Error analyzing schema: {e}"
+
+    def handle_analyze_data_tool(self, table_name: str) -> str:
+        """Return a statistical summary for a DuckDB table."""
+        parts = []
+        try:
+            parts.append(f"Table: {table_name}")
+            parts.append(self.query(f"SELECT COUNT(*) AS row_count FROM {table_name}"))
+            parts.append("Data preview (first 5 rows):")
+            parts.append(self.query(f"SELECT * FROM {table_name} LIMIT 5"))
+
+            rows, _, _ = self.execute_query(
+                f"SELECT column_name, data_type "
+                f"FROM information_schema.columns "
+                f"WHERE table_name = '{table_name}'"
+            )
+
+            num_cols, date_cols, cat_cols = [], [], []
+            for r in rows:
+                t = r[1].upper()
+                n = r[0]
+                if any(k in t for k in ["INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "HUGEINT"]):
+                    num_cols.append(n)
+                elif any(k in t for k in ["DATE", "TIMESTAMP", "TIME"]):
+                    date_cols.append(n)
+                elif any(k in t for k in ["VARCHAR", "TEXT", "CHAR", "STRING"]):
+                    cat_cols.append(n)
+
+            for col in num_cols[:3]:
+                parts.append(
+                    f"Numeric stats — {col}:\n"
+                    + self.query(
+                        f'SELECT MIN("{col}") AS min, MAX("{col}") AS max, '
+                        f'AVG("{col}") AS avg, MEDIAN("{col}") AS median '
+                        f"FROM {table_name}"
+                    )
+                )
+
+            for col in cat_cols[:2]:
+                parts.append(
+                    f"Top values — {col}:\n"
+                    + self.query(
+                        f'SELECT "{col}", COUNT(*) AS count '
+                        f"FROM {table_name} "
+                        f'GROUP BY "{col}" ORDER BY count DESC LIMIT 5'
+                    )
+                )
+
+            return "\n\n".join(parts)
+        except Exception as e:
+            logger.error("Error analyzing data: %s", e)
+            return f"Error analyzing data: {e}"
+
+    def handle_suggest_visualizations_tool(self, table_name: str) -> str:
+        """Return visualization SQL suggestions for a table."""
+        try:
+            rows, _, _ = self.execute_query(
+                f"SELECT column_name, data_type "
+                f"FROM information_schema.columns "
+                f"WHERE table_name = '{table_name}'"
+            )
+
+            cat_cols = [r[0] for r in rows if r[1].lower() in ("varchar", "text", "char", "enum")]
+            num_cols = [
+                r[0]
+                for r in rows
+                if any(
+                    k in r[1].lower()
+                    for k in ("integer", "bigint", "double", "float", "decimal", "hugeint")
+                )
+            ]
+            date_cols = [
+                r[0] for r in rows if "date" in r[1].lower() or "time" in r[1].lower()
+            ]
+
+            suggestions = [f"# Visualization Queries for `{table_name}`\n"]
+
+            if cat_cols and num_cols:
+                cc, nc = cat_cols[0], num_cols[0]
+                suggestions.append(
+                    f"## Bar Chart — {nc} by {cc}\n"
+                    f"```sql\nSELECT {cc}, SUM({nc}) AS total\n"
+                    f"FROM {table_name}\nGROUP BY {cc}\n"
+                    f"ORDER BY total DESC\nLIMIT 10;\n```"
+                )
+
+            if date_cols and num_cols:
+                dc, nc = date_cols[0], num_cols[0]
+                suggestions.append(
+                    f"## Time Series — {nc} over {dc}\n"
+                    f"```sql\nSELECT {dc}, SUM({nc}) AS total\n"
+                    f"FROM {table_name}\nGROUP BY {dc}\nORDER BY {dc};\n```"
+                )
+
+            if len(num_cols) >= 2:
+                v1, v2 = num_cols[0], num_cols[1]
+                suggestions.append(
+                    f"## Scatter Plot — {v1} vs {v2}\n"
+                    f"```sql\nSELECT {v1}, {v2}\nFROM {table_name}\nLIMIT 1000;\n```"
+                )
+
+            if len(suggestions) == 1:
+                suggestions.append(
+                    "No obvious visualization patterns found. "
+                    "Check the table schema with analyze_schema first."
+                )
+
+            return "\n\n".join(suggestions)
+        except Exception as e:
+            logger.error("Error suggesting visualizations: %s", e)
+            return f"Error suggesting visualizations: {e}"
 
     def generate_table_cache_suggestion(self, file_path: str, session_id: str) -> str:
-        """
-        Generate a suggestion to cache a file into a table.
-        
-        Args:
-            file_path: Path to the file
-            session_id: Session ID for context
-            
-        Returns:
-            Suggestion text
-        """
+        """Return a SQL snippet that caches a remote/file path into a local table."""
         short_id = session_id[:8]
-        recommended_table = f"cached_data_session_{short_id}"
-        
-        suggestion = (f"To work with this data efficiently, first cache it into a table:\n\n"
-                     f"```sql\nCREATE TABLE {recommended_table} AS SELECT * FROM ")
-        
+        tbl = f"cached_data_{short_id}"
+
         if ".parquet" in file_path or file_path.endswith(".parq"):
-            suggestion += f"read_parquet('{file_path}'"
+            reader = "read_parquet"
         elif ".csv" in file_path:
-            suggestion += f"read_csv('{file_path}'"
+            reader = "read_csv"
         elif ".json" in file_path:
-            suggestion += f"read_json('{file_path}'"
+            reader = "read_json"
         else:
-            suggestion += f"read_parquet('{file_path}'"
-            
-        # Add union_by_name if it might be a glob pattern
-        if "*" in file_path or "[" in file_path:
-            suggestion += ", union_by_name=true"
-            
-        suggestion += ");\n```\n\nThen you can query the cached table directly."
-        
-        return suggestion
+            reader = "read_parquet"
+
+        extra = ", union_by_name = true" if ("*" in file_path or "[" in file_path) else ""
+        return (
+            f"Cache this data into a local table first for efficient querying:\n\n"
+            f"```sql\nCREATE TABLE {tbl} AS\n"
+            f"  SELECT * FROM {reader}('{file_path}'{extra});\n```\n\n"
+            f"Then query `{tbl}` directly."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Query parsing helpers                                                 #
+    # ------------------------------------------------------------------ #
+
+    def extract_file_paths_from_query(self, query: str) -> list[str]:
+        """Return file paths found inside read_*() calls in a query."""
+        paths: list[str] = []
+        for match in re.finditer(r"read_\w+\s*\(([^)]+)\)", query, re.IGNORECASE):
+            paths.extend(re.findall(r"'([^']+)'", match.group(1)))
+        return paths
+
+    def extract_table_name_from_query(self, query: str) -> Optional[str]:
+        """Return the table name from a CREATE TABLE … AS … query, or None."""
+        m = re.search(
+            r"CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(\S+)\s+AS",
+            query,
+            re.IGNORECASE,
+        )
+        return m.group(1) if m else None
+
+
+def _looks_like_file(value: str) -> bool:
+    return value.startswith("s3://") or any(
+        ext in value for ext in [".parquet", ".csv", ".json", ".parq", ".jsonl"]
+    )

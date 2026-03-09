@@ -13,40 +13,39 @@ from .config import Config
 logger = logging.getLogger("duckdb-mcp-server.credentials")
 
 
+def _sanitize(value: str) -> str:
+    """
+    Escape single quotes in a credential value to prevent SQL injection in
+    CREATE SECRET statements, which do not support parameterized queries.
+    """
+    return value.replace("'", "''")
+
+
 def setup_s3_credentials(connection: duckdb.DuckDBPyConnection, config: Config) -> None:
     """
-    Configure S3 credentials for DuckDB connection using secrets-based authentication.
-    
-    This function sets up S3 access for DuckDB httpfs extension using
-    AWS credentials from the environment or AWS profiles.
-    
-    Args:
-        connection: DuckDB connection to configure
-        config: Server configuration
+    Configure S3 credentials for a DuckDB connection via the secrets API.
+
+    Strategy (in order):
+    1. If --creds-from-env: read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+    2. Otherwise: use credential_chain with optional profile / region.
+
+    Falls back to a bare credential_chain secret on any failure.
     """
-    # Skip if we're not setting up S3 credentials
     if not _should_setup_s3_credentials():
         return
-    
+
     try:
-        # Create and configure a secret with appropriate provider
         if config.creds_from_env:
             _setup_from_environment_as_secret(connection)
         else:
-            # Use profile-based credentials with credential_chain provider
             _setup_from_profile_as_secret(connection, config.s3_profile, config.s3_region)
-            
-        logger.info("S3 credentials configured successfully with secrets-based auth")
-        
+        logger.info("S3 credentials configured successfully")
     except Exception as e:
-        logger.warning(f"Failed to configure S3 credentials: {str(e)}")
+        logger.warning("Failed to configure S3 credentials: %s", e)
         logger.warning("S3 access might be limited or unavailable")
 
 
 def _should_setup_s3_credentials() -> bool:
-    """Check if we should attempt to set up S3 credentials."""
-    # Check if AWS_ACCESS_KEY_ID or AWS_PROFILE is set
-    # or if there's a credentials file
     return (
         os.getenv("AWS_ACCESS_KEY_ID") is not None
         or os.getenv("AWS_PROFILE") is not None
@@ -55,110 +54,94 @@ def _should_setup_s3_credentials() -> bool:
 
 
 def _setup_from_environment_as_secret(connection: duckdb.DuckDBPyConnection) -> None:
-    """
-    Set up S3 credentials from environment variables using secrets.
-    
-    Args:
-        connection: DuckDB connection to configure
-    """
-    # Check for required environment variables
+    """Set up S3 credentials from environment variables."""
     access_key = os.getenv("AWS_ACCESS_KEY_ID")
     secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    
+
     if not access_key or not secret_key:
-        logger.warning("AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set")
-        # Fall back to credential chain
+        logger.warning(
+            "AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY not set; "
+            "falling back to credential_chain"
+        )
         _setup_credential_chain_secret(connection)
         return
-    
-    # Get region and session token
+
     session_token = os.getenv("AWS_SESSION_TOKEN")
-    region = os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
-    
+    region = _sanitize(os.getenv("AWS_DEFAULT_REGION") or "us-east-1")
+    key = _sanitize(access_key)
+    secret = _sanitize(secret_key)
+
     try:
-        # Create a secret with config provider - use direct string formatting instead of parameterized queries
-        # since CREATE SECRET doesn't work well with parameterized queries
         if session_token:
-            create_secret_stmt = f"""
-            CREATE OR REPLACE SECRET mcp_s3_secret (
-                TYPE s3,
-                PROVIDER config,
-                KEY_ID '{access_key}',
-                SECRET '{secret_key}',
-                SESSION_TOKEN '{session_token}',
-                REGION '{region}'
-            );
-            """
-            connection.execute(create_secret_stmt)
+            token = _sanitize(session_token)
+            connection.execute(
+                f"""
+                CREATE OR REPLACE SECRET mcp_s3_secret (
+                    TYPE s3,
+                    PROVIDER config,
+                    KEY_ID '{key}',
+                    SECRET '{secret}',
+                    SESSION_TOKEN '{token}',
+                    REGION '{region}'
+                );
+                """
+            )
         else:
-            create_secret_stmt = f"""
-            CREATE OR REPLACE SECRET mcp_s3_secret (
-                TYPE s3,
-                PROVIDER config,
-                KEY_ID '{access_key}',
-                SECRET '{secret_key}',
-                REGION '{region}'
-            );
-            """
-            connection.execute(create_secret_stmt)
-            
-        logger.info("Created S3 secret with environment credentials")
+            connection.execute(
+                f"""
+                CREATE OR REPLACE SECRET mcp_s3_secret (
+                    TYPE s3,
+                    PROVIDER config,
+                    KEY_ID '{key}',
+                    SECRET '{secret}',
+                    REGION '{region}'
+                );
+                """
+            )
+        logger.info("Created S3 secret from environment credentials")
     except Exception as e:
-        logger.warning(f"Failed to create S3 secret: {str(e)}")
-        # Try fallback to credential chain
+        logger.warning("Failed to create S3 secret from environment: %s; trying credential_chain", e)
         _setup_credential_chain_secret(connection)
 
 
 def _setup_from_profile_as_secret(
-    connection: duckdb.DuckDBPyConnection, 
-    profile_name: Optional[str] = None, 
-    region: Optional[str] = None
+    connection: duckdb.DuckDBPyConnection,
+    profile_name: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> None:
-    """
-    Set up S3 credentials from AWS profile using secrets.
-    
-    Args:
-        connection: DuckDB connection to configure
-        profile_name: AWS profile name to use
-        region: AWS region to use
-    """
-    # Use credential_chain provider with profile
-    region = region or "ap-south-1"
-    profile_name = profile_name or "default"
-    
+    """Set up S3 credentials from an AWS profile via the credential_chain provider."""
+    safe_region = _sanitize(region or "us-east-1")
+    safe_profile = _sanitize(profile_name or "default")
+
     try:
-        # Use direct string formatting instead of parameterized queries
-        create_secret_stmt = f"""
-        CREATE OR REPLACE SECRET mcp_s3_secret (
-            TYPE s3,
-            PROVIDER credential_chain,
-            PROFILE '{profile_name}',
-            REGION '{region}'
-        );
-        """
-        
-        connection.execute(create_secret_stmt)
-        logger.info(f"Created S3 secret with profile: {profile_name}")
+        connection.execute(
+            f"""
+            CREATE OR REPLACE SECRET mcp_s3_secret (
+                TYPE s3,
+                PROVIDER credential_chain,
+                PROFILE '{safe_profile}',
+                REGION '{safe_region}'
+            );
+            """
+        )
+        logger.info("Created S3 secret with profile: %s", safe_profile)
     except Exception as e:
-        logger.warning(f"Failed to create S3 secret with profile: {str(e)}")
-        # Try fallback to basic credential chain
+        logger.warning(
+            "Failed to create S3 secret with profile %s: %s; trying bare credential_chain",
+            safe_profile,
+            e,
+        )
         _setup_credential_chain_secret(connection)
 
 
 def _setup_credential_chain_secret(connection: duckdb.DuckDBPyConnection) -> None:
-    """
-    Set up S3 credentials using the AWS credential chain.
-    This allows automatic credential discovery from environment,
-    instance profiles, config files, etc.
-    
-    Args:
-        connection: DuckDB connection to configure
-    """
-    create_secret_stmt = """
-    CREATE OR REPLACE SECRET mcp_s3_secret (
-        TYPE s3,
-        PROVIDER credential_chain
-    );
-    """
-    
-    connection.execute(create_secret_stmt)
+    """Fall back to automatic AWS credential discovery."""
+    connection.execute(
+        """
+        CREATE OR REPLACE SECRET mcp_s3_secret (
+            TYPE s3,
+            PROVIDER credential_chain
+        );
+        """
+    )
+    logger.info("Created S3 secret using credential_chain")
