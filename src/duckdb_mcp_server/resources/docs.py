@@ -75,18 +75,11 @@ def _load_doc_resource(filename: str) -> str:
         
     except Exception as e:
         logger.error(f"Error loading documentation resource {filename}: {str(e)}")
-        # Return fallback if loading fails
-        return 
+        return _get_fallback_docs(filename)
 
-    """
-    Get fallback documentation when resource files are not available.
-    
-    Args:
-        filename: Resource filename
-        
-    Returns:
-        Fallback documentation content
-    """
+
+def _get_fallback_docs(filename: str) -> str:
+    """Return minimal fallback documentation when XML resource files are unavailable."""
     if filename == "duckdb_friendly_sql.xml":
         return """
 <duckdb_friendly_sql>
