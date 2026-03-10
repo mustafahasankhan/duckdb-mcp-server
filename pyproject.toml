@@ -14,15 +14,15 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "duckdb>=1.2.0", 
-    "mcp>=1.0.0",
+    "duckdb>=1.2.0",
+    "mcp>=1.6.0",
     "boto3>=1.26.0",
-    "python-dotenv>=1.0.0"
+    "python-dotenv>=1.0.0",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/duckdb-mcp-server"
-"Bug Tracker" = "https://github.com/yourusername/duckdb-mcp-server/issues"
+"Homepage" = "https://github.com/mustafahasankhan/duckdb-mcp-server"
+"Bug Tracker" = "https://github.com/mustafahasankhan/duckdb-mcp-server/issues"
 
 [project.scripts]
 duckdb-mcp-server = "duckdb_mcp_server:main"

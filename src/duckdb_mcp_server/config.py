@@ -25,7 +25,7 @@ class Config:
     """AWS S3 region. If None, uses AWS_DEFAULT_REGION env var or boto3 defaults."""
     
     s3_profile: Optional[str] = None
-    """AWS profile to use for credentials. If None, uses AWS_PROFILE env var or 'default'."""
+    """Named AWS profile from ~/.aws/credentials. If None, the automatic credential chain is used."""
     
     creds_from_env: bool = False
     """Use AWS credentials from environment variables instead of profiles."""
@@ -59,8 +59,9 @@ class Config:
         parser.add_argument(
             "--s3-profile",
             type=str,
-            default=os.getenv("AWS_PROFILE", "default"),
-            help="AWS profile to use for credentials (default: uses AWS_PROFILE env var or 'default')",
+            default=os.getenv("AWS_PROFILE"),
+            help="AWS named profile to use from ~/.aws/credentials (default: AWS_PROFILE env var; "
+                 "omit to use the automatic credential chain)",
         )
         
         parser.add_argument(

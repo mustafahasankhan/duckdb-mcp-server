@@ -1,49 +1,61 @@
 # DuckDB MCP Server
 
 [![PyPI - Version](https://img.shields.io/pypi/v/duckdb-mcp-server)](https://pypi.org/project/duckdb-mcp-server/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/duckdb-mcp-server)](https://pypi.org/project/duckdb-mcp-server/)
 [![PyPI - License](https://img.shields.io/pypi/l/duckdb-mcp-server)](LICENSE)
 
-A Model Context Protocol (MCP) server implementation that enables AI assistants like Claude to interact with DuckDB for powerful data analysis capabilities.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants full access to [DuckDB](https://duckdb.org/) — query local files, S3 buckets, and in-memory data using plain SQL.
 
 <a href="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server/badge" alt="DuckDB Server MCP server" />
 </a>
 
 ## 🌟 What is DuckDB MCP Server?
+---
 
-DuckDB MCP Server connects AI assistants to [DuckDB](https://duckdb.org/) - a high-performance analytical database - through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This allows AI models to:
+## What it does
 
-- Query data directly from various sources like CSV, Parquet, JSON, etc.
-- Access data from cloud storage (S3, etc.) without complex setup
-- Perform sophisticated data analysis using SQL
-- Generate data insights with proper context and understanding
+This server exposes DuckDB to any MCP-compatible client (Claude Desktop, Cursor, VS Code, etc.). The assistant can:
 
-## 🚀 Key Features
+- Run arbitrary SQL against local CSV, Parquet, and JSON files
+- Query S3 / GCS buckets directly or cache them as local tables
+- Inspect schemas, compute statistics, and suggest visualizations
+- Use DuckDB's analytical SQL extensions (window functions, `GROUP BY ALL`, `SELECT * EXCLUDE`, etc.)
 
-- **SQL Query Tool**: Execute any SQL query with DuckDB's powerful syntax
-- **Multiple Data Sources**: Query directly from:
-  - Local files (CSV, Parquet, JSON, etc.)
-  - S3 buckets and cloud storage
-  - SQLite databases
-  - All other data sources supported by DuckDB
-- **Auto-Connection Management**: Automatic database file creation and connection handling
-- **Smart Credential Handling**: Seamless AWS/S3 credential management
-- **Documentation Resources**: Built-in DuckDB SQL and data import reference for AI assistants
+## Tools
 
-## 📋 Requirements
+| Tool | Description |
+|---|---|
+| `query` | Execute any SQL query. Results capped at 10 000 rows. |
+| `analyze_schema` | Describe the columns and types of a file or table. |
+| `analyze_data` | Row count, numeric stats (min/max/avg/median), date ranges, top categorical values. |
+| `suggest_visualizations` | Suggest chart types and ready-to-run SQL queries based on column types. |
+| `create_session` | Create or reset a session for cross-call context tracking. |
+
+## Resources
+
+Three built-in XML documentation resources are always available to the assistant:
+
+| Resource URI | Content |
+|---|---|
+| `duckdb-ref://friendly-sql` | DuckDB SQL extensions (GROUP BY ALL, SELECT * EXCLUDE/REPLACE, FROM-first syntax, …) |
+| `duckdb-ref://data-import` | Loading CSV, Parquet, JSON, and S3/GCS data; glob patterns; multi-file reads |
+| `duckdb-ref://visualization` | Chart patterns and query templates for time series, bar, scatter, and heatmap |
+
+---
+
+## Requirements
 
 - Python 3.10+
-- An MCP-compatible client (Claude Desktop, Cursor, VS Code with Copilot, etc.)
+- An MCP-compatible client
 
-## 💻 Installation
-
-### Using pip
+## Installation
 
 ```bash
 pip install duckdb-mcp-server
 ```
 
-### From source
+**From source:**
 
 ```bash
 git clone https://github.com/mustafahasankhan/duckdb-mcp-server.git
@@ -51,32 +63,42 @@ cd duckdb-mcp-server
 pip install -e .
 ```
 
-## 🔧 Configuration
+---
 
-### Command Line Options
+## Configuration
 
-```bash
-duckdb-mcp-server --db-path path/to/database.db [options]
+```
+duckdb-mcp-server --db-path <path> [options]
 ```
 
-#### Required Parameters:
-- `--db-path` - Path to DuckDB database file (will be created if doesn't exist)
+| Flag | Required | Description |
+|---|---|---|
+| `--db-path` | Yes | Path to the DuckDB file. Created automatically if it does not exist. |
+| `--readonly` | No | Open the database read-only. Errors if the file does not exist. |
+| `--s3-region` | No | AWS region. Defaults to `AWS_DEFAULT_REGION` env var, then `us-east-1`. |
+| `--s3-profile` | No | AWS profile name. Defaults to `AWS_PROFILE` env var, then `default`. |
+| `--creds-from-env` | No | Read `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` from environment. |
 
-#### Optional Parameters:
-- `--readonly` - Run in read-only mode (will error if database doesn't exist)
-- `--s3-region` - AWS S3 region (default: uses AWS_DEFAULT_REGION env var)
-- `--s3-profile` - AWS profile for S3 credentials (default: uses AWS_PROFILE or 'default')
-- `--creds-from-env` - Use AWS credentials from environment variables
+---
 
-## 🔌 Setting Up with Claude Desktop
+## Client setup
 
-1. Install Claude Desktop from [claude.ai/download](https://claude.ai/download)
-2. Edit Claude Desktop's configuration file:
+### Claude Desktop
 
-   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-   **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
-3. Add DuckDB MCP Server configuration:
+```json
+{
+  "mcpServers": {
+    "duckdb": {
+      "command": "duckdb-mcp-server",
+      "args": ["--db-path", "~/claude-duckdb/data.db"]
+    }
+  }
+}
+```
+
+### With S3 access
 
 ```json
 {
@@ -84,84 +106,101 @@ duckdb-mcp-server --db-path path/to/database.db [options]
     "duckdb": {
       "command": "duckdb-mcp-server",
       "args": [
-        "--db-path",
-        "~/claude-duckdb/data.db"
-      ]
+        "--db-path", "~/claude-duckdb/data.db",
+        "--s3-region", "us-east-1",
+        "--creds-from-env"
+      ],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "YOUR_KEY",
+        "AWS_SECRET_ACCESS_KEY": "YOUR_SECRET"
+      }
     }
   }
 }
 ```
 
-## 📊 Example Usage
+### Read-only mode
 
-Once configured, you can ask your AI assistant to analyze data using DuckDB:
+Useful when the database is shared or managed separately:
 
+```json
+{
+  "mcpServers": {
+    "duckdb": {
+      "command": "duckdb-mcp-server",
+      "args": ["--db-path", "/shared/analytics.db", "--readonly"]
+    }
+  }
+}
 ```
-"Load the sales.csv file and show me the top 5 products by revenue"
-```
 
-The AI will generate and execute the appropriate SQL:
+---
+
+## Example conversations
+
+### Querying a local file
+
+> "Load sales.csv and show me the top 5 products by revenue."
 
 ```sql
--- Load and query the CSV data
-SELECT 
+SELECT
     product_name,
     SUM(quantity * price) AS revenue
 FROM read_csv('sales.csv')
-GROUP BY product_name
+GROUP BY ALL
 ORDER BY revenue DESC
 LIMIT 5;
 ```
 
-### Working with S3 Data
+### Working with S3 data
 
-Query data directly from S3 buckets:
-
-```
-"Analyze the daily user signups from our analytics data in S3"
-```
-
-The AI will generate appropriate SQL to query S3:
+> "Cache this month's signups from S3 and show me a daily breakdown."
 
 ```sql
-SELECT 
-    date_trunc('day', signup_timestamp) AS day,
-    COUNT(*) AS num_signups
-FROM read_parquet('s3://my-analytics-bucket/signups/*.parquet')
-GROUP BY day
+-- Step 1: cache the remote data locally
+CREATE TABLE signups AS
+  SELECT * FROM read_parquet('s3://my-bucket/signups/2026-03/*.parquet',
+                             union_by_name = true);
+
+-- Step 2: query the cached table
+SELECT
+    date_trunc('day', signup_at) AS day,
+    COUNT(*)                     AS signups
+FROM signups
+GROUP BY ALL
 ORDER BY day DESC;
 ```
 
-## 🌩️ Cloud Storage Authentication
+### Statistical analysis
 
-DuckDB MCP Server handles AWS authentication in this order:
+> "Give me a statistical summary of the orders table."
 
-1. Explicit credentials (if `--creds-from-env` is enabled)
-2. Named profile credentials (via `--s3-profile`)
-3. Default credential chain (environment, shared credentials file, etc.)
+The assistant calls `analyze_data("orders")` which returns row count, numeric stats per column, date ranges, and top categorical values — no SQL required from you.
 
-## 🛠️ Development
+---
+
+## AWS credential resolution order
+
+1. Environment variables (`--creds-from-env`): `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`
+2. Named profile (`--s3-profile`): reads `~/.aws/credentials`
+3. Credential chain: environment → shared credentials file → instance profile (EC2/ECS)
+
+---
+
+## Development
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/duckdb-mcp-server.git
+git clone https://github.com/mustafahasankhan/duckdb-mcp-server.git
 cd duckdb-mcp-server
 
-# Set up a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install in development mode
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Run tests
 pytest
 ```
 
-## 📜 License
+---
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Contributing
-
+## License
 Contributions are welcome! Please feel free to submit a Pull Request.
+[MIT](LICENSE)
