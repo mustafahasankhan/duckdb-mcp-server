@@ -6,6 +6,11 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI assistants full access to [DuckDB](https://duckdb.org/) — query local files, S3 buckets, and in-memory data using plain SQL.
 
+<a href="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@mustafahasankhan/duckdb-mcp-server/badge" alt="DuckDB Server MCP server" />
+</a>
+
+## 🌟 What is DuckDB MCP Server?
 ---
 
 ## What it does
@@ -197,5 +202,5 @@ pytest
 ---
 
 ## License
-
+Contributions are welcome! Please feel free to submit a Pull Request.
 [MIT](LICENSE)
